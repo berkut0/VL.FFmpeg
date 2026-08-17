@@ -4,7 +4,7 @@
     <id>VL.FFmpeg</id>
     <version>0.1.0-alpha.5</version>
     <title>VL.FFmpeg</title>
-    <authors>Yar</authors>
+    <authors>Arktk Berkut</authors>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>FFmpeg-backed IVideoSource2 for vvvv gamma. Alpha software video decode for Skia and Stride consumers.</description>
     <tags>VL vvvv gamma video ffmpeg IVideoSource2</tags>
