@@ -1,0 +1,26 @@
+# Build output
+**/bin/
+**/obj/
+artifacts/
+lib/
+*.nupkg
+*.snupkg
+
+# IDE and user-local state
+.vs/
+.vscode/
+*.user
+*.suo
+
+# vvvv/runtime-local state
+.packages/
+packages/
+.vl/
+
+# Native intermediates
+*.obj
+*.pdb
+
+# Acquired FFmpeg runtime (packed, not committed)
+runtimes/win-x64/native/*.dll
+LICENSES/FFmpeg-LGPL-3.0.txt

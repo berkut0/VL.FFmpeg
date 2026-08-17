@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
+  <metadata>
+    <id>VL.FFmpeg</id>
+    <version>0.1.0-alpha.5</version>
+    <title>VL.FFmpeg</title>
+    <authors>Yar</authors>
+    <requireLicenseAcceptance>false</requireLicenseAcceptance>
+    <description>FFmpeg-backed IVideoSource2 for vvvv gamma. Alpha software video decode for Skia and Stride consumers.</description>
+    <tags>VL vvvv gamma video ffmpeg IVideoSource2</tags>
+    <license type="expression">MIT</license>
+    <readme>README.md</readme>
+    <dependencies>
+      <group targetFramework="net8.0" />
+    </dependencies>
+  </metadata>
+  <files>
+    <file src="..\lib\**\*.dll" target="lib" />
+    <file src="..\lib\**\*.xml" target="lib" />
+    <file src="..\runtimes\win-x64\native\*.dll" target="runtimes\win-x64\native" />
+    <file src="..\VL.FFmpeg.vl" target="" />
+    <file src="..\help\**\*.vl" target="help" />
+    <file src="..\README.md" target="" />
+    <file src="..\THIRD-PARTY-NOTICES.md" target="" />
+    <file src="..\LICENSE" target="LICENSES\VL.FFmpeg" />
+    <file src="..\LICENSES\FFmpeg-LGPL-3.0.txt" target="LICENSES" />
+    <file src="..\third_party\FFmpeg.AutoGen\LICENSE.txt" target="LICENSES\FFmpeg.AutoGen" />
+  </files>
+</package>

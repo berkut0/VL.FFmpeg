@@ -1,0 +1,97 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Document xmlns:p="property" xmlns:r="reflection" Id="Dbjs0S9BO8DPypnRrWHHeO" LanguageVersion="2025.7.4-0015-ge855ca6589" Version="0.128">
+  <NugetDependency Id="TbVkGKGpkJrMDWeFpGCHur" Location="VL.CoreLib" Version="2025.7.4-0015-ge855ca6589" />
+  <Patch Id="F7aXTm95Z3FOTRmwv3NmGc">
+    <Canvas Id="QwXInJv5zbuLizfbLA7kqb" DefaultCategory="Main" BordersChecked="false" CanvasType="FullCategory" />
+    <!--
+
+    ************************ Application ************************
+
+-->
+    <Node Name="Application" Bounds="100,100" Id="FiOU5XDZY6TNHASyrXmpCl">
+      <p:NodeReference>
+        <Choice Kind="ContainerDefinition" Name="Process" />
+        <CategoryReference Kind="Category" Name="Primitive" />
+      </p:NodeReference>
+      <Patch Id="TJDsXFmSGJYPZmB2Ko0yY6">
+        <Canvas Id="UxtiQ6xsWWoPP1EFCwaYGf" CanvasType="Group">
+          <Node Bounds="213,441,165,19" Id="HM59cFXRWROOQRYrC5BBUd">
+            <p:NodeReference LastCategoryFullName="Video.FFmpeg" LastDependency="VL.FFmpeg.vl">
+              <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
+              <Choice Kind="ProcessAppFlag" Name="FFmpegVideoPlayer" />
+            </p:NodeReference>
+            <Pin Id="TqrydYwHrrnP4Uv2pCXKDZ" Name="Filename" Kind="InputPin" />
+            <Pin Id="TRlLRh5ZRbSONyXTDHzUS6" Name="Play" Kind="InputPin" />
+            <Pin Id="Ihz1iQ2YhpvPMU1ZtlPUEa" Name="Loop" Kind="InputPin" />
+            <Pin Id="T5U1AwvNqfdL0m7yGUxOKK" Name="Seek Time" Kind="InputPin" />
+            <Pin Id="U3NrIjU3ZmBMFhmMTzMtZK" Name="Seek" Kind="InputPin" />
+            <Pin Id="Es9Vu1WDkEULqiOSmHuNDX" Name="Video Source" Kind="OutputPin" />
+            <Pin Id="QGT8afGHZM4Ov6IOglORJl" Name="Position" Kind="OutputPin" />
+            <Pin Id="GDxZOqx2JIZMHfVVEJ5WuW" Name="Duration" Kind="OutputPin" />
+            <Pin Id="QgrclPyEDUBLvZQYmHFAzX" Name="Is Playing" Kind="OutputPin" />
+            <Pin Id="JFQpcliFeQXNs40SZcTbcM" Name="Is Ended" Kind="OutputPin" />
+            <Pin Id="LK2vOoN4RUXNVvzUxdVZJb" Name="On End" Kind="OutputPin" />
+            <Pin Id="BMHlS8t4aurQHxs70nE6J9" Name="Playback Overload" Kind="OutputPin" />
+            <Pin Id="H5jiDgZvis4Njgw2XkXq93" Name="Phase" Kind="OutputPin" />
+            <Pin Id="JCZGEDdooOPLJjHsJLP25p" Name="Decode Path" Kind="OutputPin" />
+            <Pin Id="T6TOOyuJWM0PpubjSODqU8" Name="Decode Mode" Kind="InputPin" IsHidden="true" />
+            <Pin Id="N6oMDxMk02hQAdhIBGMcUG" Name="Status" Kind="OutputPin" IsHidden="true" />
+          </Node>
+          <Pad Id="CqURsvm67ZlPiMpBuqNlZG" Comment="Decode Path" Bounds="375,490,127,15" ShowValueBox="true" isIOBox="true" />
+          <Node Bounds="213,381,55,19" Id="K9b8Eg0JcQAO7CCb2uKrIc">
+            <p:NodeReference LastCategoryFullName="System.Conversion" LastDependency="VL.CoreLib.vl">
+              <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
+              <Choice Kind="OperationCallFlag" Name="ToString" />
+            </p:NodeReference>
+            <Pin Id="KTaYtv9z548PO5Ob7aGduP" Name="Input" Kind="InputPin" />
+            <Pin Id="GXm3nHd62pkMbIFRz78BR7" Name="Result" Kind="OutputPin" />
+          </Node>
+          <Pad Id="JuHWSyFpyyfLxhs7E2ynPA" Comment="" Bounds="215,350,208,15" ShowValueBox="true" isIOBox="true" Value="D:\video\A.I.Rising.BDRemux.1080p.pk.mkv">
+            <p:TypeAnnotation LastCategoryFullName="IO" LastDependency="VL.CoreLib.vl">
+              <Choice Kind="ImmutableTypeFlag" Name="Path" />
+            </p:TypeAnnotation>
+          </Pad>
+          <Node Bounds="213,520,119,19" Id="RYaRRP3RVRVPbet61Q7RY3">
+            <p:NodeReference LastCategoryFullName="Stride.Video" LastDependency="VL.Stride.vl">
+              <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
+              <Choice Kind="ProcessAppFlag" Name="VideoSourceToTexture" />
+            </p:NodeReference>
+            <Pin Id="JfVby7CnOrgLChXb4slYWo" Name="Node Context" Kind="InputPin" IsHidden="true" />
+            <Pin Id="VJkfbBBalmgM96z5BlsOIW" Name="Input" Kind="InputPin" />
+            <Pin Id="Tq1Az0nH6cZLGJk7OzbcDw" Name="Fallback" Kind="InputPin" />
+            <Pin Id="AAwLXtphVsjM4r29lzP8qV" Name="Prefer Push" Kind="InputPin" />
+            <Pin Id="NqJRCrlLlM1LFquMRVt3kQ" Name="Prefer Gpu" Kind="InputPin" />
+            <Pin Id="R9Lcti8G41HLfDljtSanYS" Name="Output" Kind="OutputPin" />
+          </Node>
+          <Pad Id="IwLQAohxQzgL9eIt2hQYk6" Comment="" Bounds="215,561,190,132" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="L6asVD6nbbEO9KuJf3qpoN" Comment="Seek" Bounds="375,400,35,35" ShowValueBox="true" isIOBox="true" Value="false">
+            <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
+              <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
+            </p:TypeAnnotation>
+            <p:ValueBoxSettings>
+              <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
+            </p:ValueBoxSettings>
+          </Pad>
+          <Pad Id="Twuf0EIhP8MMB9Fl7Dl61R" Comment="Position" Bounds="235,501,35,15" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="QrU52BTYEgsOfnKTRlQVLU" Comment="Duration" Bounds="255,480,47,15" ShowValueBox="true" isIOBox="true" />
+        </Canvas>
+        <Patch Id="LELOXi7S1P4M414LVYeZxg" Name="Create" />
+        <Patch Id="SdEgnfRfDBHOLf4kARRRmZ" Name="Update" />
+        <ProcessDefinition Id="Viggim8m0dfLHmwIJ4S4z8">
+          <Fragment Id="O5me2729wMBOOdbuvmhk1B" Patch="LELOXi7S1P4M414LVYeZxg" Enabled="true" />
+          <Fragment Id="BKi8BCm83cdOCkJeeoCAaE" Patch="SdEgnfRfDBHOLf4kARRRmZ" Enabled="true" />
+        </ProcessDefinition>
+        <Link Id="VyOG09H7kf7Ov2KHsTFsPF" Ids="JCZGEDdooOPLJjHsJLP25p,CqURsvm67ZlPiMpBuqNlZG" />
+        <Link Id="AMopXycztOELu3vvXSQqfj" Ids="GXm3nHd62pkMbIFRz78BR7,TqrydYwHrrnP4Uv2pCXKDZ" />
+        <Link Id="L8XJt8UUdg1P9OqKLxO7le" Ids="JuHWSyFpyyfLxhs7E2ynPA,KTaYtv9z548PO5Ob7aGduP" />
+        <Link Id="NXDYo1o6D2fO3QGwWt3RJl" Ids="Es9Vu1WDkEULqiOSmHuNDX,VJkfbBBalmgM96z5BlsOIW" />
+        <Link Id="Kk7VIddmVrDQdRPnC1e925" Ids="R9Lcti8G41HLfDljtSanYS,IwLQAohxQzgL9eIt2hQYk6" />
+        <Link Id="VDBKRW78UPLNRq6rprsjkK" Ids="L6asVD6nbbEO9KuJf3qpoN,U3NrIjU3ZmBMFhmMTzMtZK" />
+        <Link Id="Jwwp0KwawEkP0aneF505fv" Ids="QGT8afGHZM4Ov6IOglORJl,Twuf0EIhP8MMB9Fl7Dl61R" />
+        <Link Id="EXhtbeBoHcMPybNliXsZl1" Ids="GDxZOqx2JIZMHfVVEJ5WuW,QrU52BTYEgsOfnKTRlQVLU" />
+      </Patch>
+    </Node>
+  </Patch>
+  <NugetDependency Id="AXmKmrFRwjpPCsYM2oZg87" Location="VL.FFmpeg" Version="0.0.0" />
+  <NugetDependency Id="KPW8u1r0atIMny4p7IBKIY" Location="VL.Stride" Version="2025.7.4-0015-ge855ca6589" />
+</Document>

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <AssemblyName>VL.FFmpeg</AssemblyName>
+    <RootNamespace>VL.FFmpeg</RootNamespace>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <OutputPath>..\..\lib\</OutputPath>
+    <PlatformTarget>x64</PlatformTarget>
+    <Version>0.1.0-alpha.5</Version>
+    <IsPackable>false</IsPackable>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <NoWarn>$(NoWarn);108;169;618;1573;1591;1701;1702;1705;8981</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Build-time references only. The VL NuGet is assembled from the
+         deployment nuspec and relies on the VL.Core already hosted by Gamma. -->
+    <PackageReference Include="System.Text.Json" />
+    <PackageReference Include="VL.Core" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\third_party\FFmpeg.AutoGen\**\*.cs"
+             Exclude="..\..\third_party\FFmpeg.AutoGen\bin\**;..\..\third_party\FFmpeg.AutoGen\obj\**">
+      <Link>Interop\AutoGen\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Compile>
+  </ItemGroup>
+</Project>
