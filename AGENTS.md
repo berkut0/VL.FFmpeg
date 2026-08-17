@@ -2,9 +2,9 @@
 
 ## Goal
 
-Provide one FFmpeg-backed `IVideoSource2` package for vvvv gamma. Skia and
-Stride use their standard video-source consumers. Do not add renderer-specific
-packages unless renderer-specific public code becomes necessary.
+Provide one FFmpeg video player for vvvv gamma. Skia and Stride use their
+standard video-source consumers. Do not add renderer-specific packages unless
+renderer-specific public code becomes necessary.
 
 ## Architecture
 

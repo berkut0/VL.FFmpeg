@@ -1,21 +1,23 @@
 # VL.FFmpeg
 
-FFmpeg-backed `IVideoSource2` for vvvv gamma. One source feeds the standard
-Skia `VideoSourceToSKImage` and Stride `VideoSourceToTexture` nodes.
+A video player node for vvvv gamma. FFmpeg does the decoding, so you can play
+the files you actually have — not only the formats a built-in player happens
+to like.
+
+Connect it to the usual Skia or Stride video nodes.
 
 Windows x64. Alpha.
 
 ## Features
 
-- Software decode to CPU-backed BGRA8 frames
-- Shared-device D3D11VA decode to GPU-backed BGRA8 frames
-- Play, pause, seek, EOF and basic looping
-- Bounded decode queue and cancellable native I/O
+- Play, pause, seek, end-of-file and basic looping
+- Works with Skia and Stride through the standard video nodes
+- GPU decode when the renderer can take a texture, otherwise software
+- Keeps decoding off the render thread
 
-`Decode Mode` defaults to `Auto`: consumers with `Prefer GPU` use D3D11VA,
-otherwise software. Explicit `Hardware` mode faults instead of falling back.
-NV12 and P010 are converted on the GPU. HDR tone mapping and audio are not
-implemented.
+`Decode Mode` defaults to `Auto`: GPU when the consumer asks for it, software
+otherwise. Explicit `Hardware` mode fails instead of falling back. HDR tone
+mapping and audio are not implemented.
 
 ## Build
 

@@ -6,8 +6,8 @@
     <title>VL.FFmpeg</title>
     <authors>Arktk Berkut</authors>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
-    <description>FFmpeg-backed IVideoSource2 for vvvv gamma. Alpha software video decode for Skia and Stride consumers.</description>
-    <tags>VL vvvv gamma video ffmpeg IVideoSource2</tags>
+    <description>Video player for vvvv gamma, powered by FFmpeg. Play arbitrary video files in Skia and Stride.</description>
+    <tags>VL vvvv gamma video ffmpeg player</tags>
     <license type="expression">MIT</license>
     <readme>README.md</readme>
     <dependencies>

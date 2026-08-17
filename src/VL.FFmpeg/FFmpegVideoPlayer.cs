@@ -6,7 +6,7 @@ using VL.Model;
 namespace VL.FFmpeg.Nodes;
 
 /// <summary>
-/// Provides an FFmpeg-backed video source for the standard Gamma video pipeline.
+/// FFmpeg video player for vvvv gamma.
 /// </summary>
 /// <remarks>
 /// Connect the output to VideoSourceToSKImage or VideoSourceToTexture.
