@@ -18,7 +18,7 @@
           <Node Bounds="213,441,165,19" Id="HM59cFXRWROOQRYrC5BBUd">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
-              <Choice Kind="ProcessAppFlag" Name="FFmpegVideoPlayer" />
+              <Choice Kind="ProcessAppFlag" Name="VideoPlayer" />
             </p:NodeReference>
             <Pin Id="TqrydYwHrrnP4Uv2pCXKDZ" Name="Filename" Kind="InputPin" />
             <Pin Id="TRlLRh5ZRbSONyXTDHzUS6" Name="Play" Kind="InputPin" />

@@ -12,7 +12,7 @@ namespace VL.FFmpeg.Nodes;
 /// Connect the output to VideoSourceToSKImage or VideoSourceToTexture.
 /// </remarks>
 [ProcessNode]
-public sealed class FFmpegVideoPlayer : IVideoSource2, IDisposable
+public sealed class VideoPlayer : IVideoSource2, IDisposable
 {
     private readonly object _syncRoot = new();
     private readonly IFFmpegPlayerSessionFactory _sessionFactory;
@@ -28,12 +28,12 @@ public sealed class FFmpegVideoPlayer : IVideoSource2, IDisposable
     /// Creates a Gamma video source. Native resources are created lazily by a
     /// subscribed video consumer.
     /// </summary>
-    public FFmpegVideoPlayer()
+    public VideoPlayer()
         : this(FFmpegPlayerSessionFactory.Instance)
     {
     }
 
-    internal FFmpegVideoPlayer(IFFmpegPlayerSessionFactory sessionFactory)
+    internal VideoPlayer(IFFmpegPlayerSessionFactory sessionFactory)
     {
         _sessionFactory = sessionFactory ?? throw new ArgumentNullException(nameof(sessionFactory));
     }
@@ -49,15 +49,15 @@ public sealed class FFmpegVideoPlayer : IVideoSource2, IDisposable
         out bool isEnded,
         out bool onEnd,
         out bool playbackOverload,
-        out FFmpegPlaybackPhase phase,
-        out FFmpegDecodePath decodePath,
+        out PlaybackPhase phase,
+        out DecodePath decodePath,
         [Pin(Visibility = PinVisibility.Optional)] out string status,
         string filename = "",
         bool play = true,
         bool loop = false,
         double seekTime = 0d,
         bool seek = false,
-        [Pin(Visibility = PinVisibility.Optional)] FFmpegDecodeMode decodeMode = FFmpegDecodeMode.Auto)
+        [Pin(Visibility = PinVisibility.Optional)] DecodeMode decodeMode = DecodeMode.Auto)
     {
         ThrowIfDisposed();
         PlaybackOptions? changedOptions = null;
@@ -177,7 +177,7 @@ public sealed class FFmpegVideoPlayer : IVideoSource2, IDisposable
             _currentSession = null;
             Volatile.Write(ref _status, PlaybackStatus.Idle with
             {
-                Phase = FFmpegPlaybackPhase.Disposed,
+                Phase = PlaybackPhase.Disposed,
                 Message = "Disposed"
             });
             unchecked

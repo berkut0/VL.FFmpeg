@@ -3,8 +3,8 @@ using VL.FFmpeg.Nodes;
 namespace VL.FFmpeg.Internal;
 
 internal sealed record PlaybackStatus(
-    FFmpegPlaybackPhase Phase,
-    FFmpegDecodePath DecodePath,
+    PlaybackPhase Phase,
+    DecodePath DecodePath,
     double Position,
     double Duration,
     bool IsPlaying,
@@ -13,8 +13,8 @@ internal sealed record PlaybackStatus(
     string Message)
 {
     public static readonly PlaybackStatus Idle = new(
-        Phase: FFmpegPlaybackPhase.Idle,
-        DecodePath: FFmpegDecodePath.None,
+        Phase: PlaybackPhase.Idle,
+        DecodePath: DecodePath.None,
         Position: 0d,
         Duration: 0d,
         IsPlaying: false,

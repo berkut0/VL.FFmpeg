@@ -3,7 +3,7 @@ namespace VL.FFmpeg.Nodes;
 /// <summary>
 /// High-level lifecycle state of an FFmpeg playback session.
 /// </summary>
-public enum FFmpegPlaybackPhase
+public enum PlaybackPhase
 {
     /// <summary>No media session is active.</summary>
     Idle,

@@ -17,7 +17,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 {
     private readonly CancellationToken _cancellationToken;
     private readonly AVIOInterruptCB_callback _interruptCallback;
-    private readonly FFmpegDecodeMode _decodeMode;
+    private readonly DecodeMode _decodeMode;
     private readonly nint _graphicsDevice;
     private readonly GraphicsDeviceType _graphicsDeviceType;
     private readonly bool _usesLinearColorspace;
@@ -44,7 +44,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         TimeSpan initialPosition,
         CancellationToken cancellationToken,
         string? nativeRuntimePath = null,
-        FFmpegDecodeMode decodeMode = FFmpegDecodeMode.Software,
+        DecodeMode decodeMode = DecodeMode.Software,
         nint graphicsDevice = default,
         GraphicsDeviceType graphicsDeviceType = GraphicsDeviceType.None,
         bool usesLinearColorspace = false)
@@ -332,7 +332,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
                 hardwareStatus);
         }
 
-        if (_decodeMode == FFmpegDecodeMode.Hardware)
+        if (_decodeMode == DecodeMode.Hardware)
         {
             var reason = _hardwareFormatOffered
                 ? $"FFmpeg selected software pixel format {pixelFormat} instead of D3D11VA."
@@ -394,7 +394,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 
     private void ConfigureHardwareDecoder()
     {
-        if (_decodeMode == FFmpegDecodeMode.Software)
+        if (_decodeMode == DecodeMode.Software)
         {
             _decodeStatus = "Software BGRA8";
             return;
@@ -403,7 +403,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         var devicePointer = _graphicsDevice;
         if (_graphicsDeviceType != GraphicsDeviceType.Direct3D11 || devicePointer == nint.Zero)
         {
-            if (_decodeMode == FFmpegDecodeMode.Hardware)
+            if (_decodeMode == DecodeMode.Hardware)
                 throw new FFmpegHardwareException("Hardware mode requires a Direct3D11 consumer with Prefer GPU enabled.");
             _decodeStatus = "Software BGRA8 fallback; consumer supplied no Direct3D11 device";
             return;
@@ -439,7 +439,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _decodeStatus = "D3D11VA configured on the consumer device";
         }
         catch (Exception exception) when (
-            _decodeMode == FFmpegDecodeMode.Auto
+            _decodeMode == DecodeMode.Auto
             && exception is not OperationCanceledException)
         {
             _texturePool?.Dispose();

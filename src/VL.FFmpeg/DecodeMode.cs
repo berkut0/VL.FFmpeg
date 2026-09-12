@@ -3,7 +3,7 @@ namespace VL.FFmpeg.Nodes;
 /// <summary>
 /// Selects how FFmpeg decodes video frames.
 /// </summary>
-public enum FFmpegDecodeMode
+public enum DecodeMode
 {
     /// <summary>Use D3D11VA when the consumer supplies a D3D11 device, otherwise use software.</summary>
     Auto,

@@ -11,7 +11,7 @@ internal abstract class DecodedVideoFrame : IDisposable
         int height,
         TimeSpan timecode,
         (int N, int D) frameRate,
-        FFmpegDecodePath decodePath,
+        DecodePath decodePath,
         string decodeStatus)
     {
         Width = width;
@@ -30,7 +30,7 @@ internal abstract class DecodedVideoFrame : IDisposable
 
     public (int N, int D) FrameRate { get; }
 
-    public FFmpegDecodePath DecodePath { get; }
+    public DecodePath DecodePath { get; }
 
     public string DecodeStatus { get; internal set; }
 
@@ -50,7 +50,7 @@ internal sealed class CpuDecodedVideoFrame : DecodedVideoFrame
         TimeSpan timecode,
         (int N, int D) frameRate,
         string decodeStatus)
-        : base(width, height, timecode, frameRate, FFmpegDecodePath.Software, decodeStatus)
+        : base(width, height, timecode, frameRate, DecodePath.Software, decodeStatus)
     {
         _bgra = bgra;
     }
@@ -84,7 +84,7 @@ internal sealed class GpuDecodedVideoFrame : DecodedVideoFrame
             lease.Texture.Height,
             timecode,
             frameRate,
-            FFmpegDecodePath.D3D11VaGpuTexture,
+            DecodePath.D3D11VaGpuTexture,
             decodeStatus)
     {
         _lease = lease;

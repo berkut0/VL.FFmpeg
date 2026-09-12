@@ -3,7 +3,7 @@ namespace VL.FFmpeg.Nodes;
 /// <summary>
 /// Path used to decode and deliver the current video frame.
 /// </summary>
-public enum FFmpegDecodePath
+public enum DecodePath
 {
     /// <summary>No decoder path has been selected.</summary>
     None,

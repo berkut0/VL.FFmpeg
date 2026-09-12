@@ -28,7 +28,7 @@ public sealed unsafe class D3D11HardwareTests
                 TimeSpan.Zero,
                 CancellationToken.None,
                 FindRepositoryRuntime(),
-                FFmpegDecodeMode.Hardware,
+                DecodeMode.Hardware,
                 graphicsDevice: 0,
                 graphicsDeviceType: GraphicsDeviceType.None);
         }));
@@ -65,7 +65,7 @@ public sealed unsafe class D3D11HardwareTests
                        TimeSpan.Zero,
                        CancellationToken.None,
                        FindRepositoryRuntime(),
-                       FFmpegDecodeMode.Hardware,
+                       DecodeMode.Hardware,
                        graphicsDevice: device,
                        graphicsDeviceType: GraphicsDeviceType.Direct3D11,
                        usesLinearColorspace: false))
@@ -138,11 +138,11 @@ public sealed unsafe class D3D11HardwareTests
         IResourceHandle<VideoFrame>? handle = null;
         try
         {
-            using var source = new FFmpegVideoPlayer();
+            using var source = new VideoPlayer();
             source.Update(
                 out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
                 filename: filename,
-                decodeMode: FFmpegDecodeMode.Auto);
+                decodeMode: DecodeMode.Auto);
             var clock = new TestFrameClock { Time = 0.25d };
             var playbackContext = new VideoPlaybackContext(
                 clock,
@@ -151,7 +151,7 @@ public sealed unsafe class D3D11HardwareTests
                 GraphicsDeviceType.Direct3D11,
                 usesLinearColorspace: false);
 
-            FFmpegDecodePath path;
+            DecodePath path;
             string status;
             using (var session = ((IVideoSource2)source).Start(playbackContext))
             {
@@ -168,7 +168,7 @@ public sealed unsafe class D3D11HardwareTests
                 source.Update(
                     out _, out _, out _, out _, out _, out _, out _, out _, out path, out status,
                     filename: filename,
-                    decodeMode: FFmpegDecodeMode.Auto);
+                    decodeMode: DecodeMode.Auto);
             }
 
             var hasTexture = handle!.Resource.TryGetTexture(out var texture);
@@ -176,7 +176,7 @@ public sealed unsafe class D3D11HardwareTests
             {
                 Assert.That(hasTexture, Is.True);
                 Assert.That(texture.NativePointer, Is.Not.EqualTo(nint.Zero));
-                Assert.That(path, Is.EqualTo(FFmpegDecodePath.D3D11VaGpuTexture));
+                Assert.That(path, Is.EqualTo(DecodePath.D3D11VaGpuTexture));
                 Assert.That(status, Does.Contain("D3D11VA"));
             }
         }

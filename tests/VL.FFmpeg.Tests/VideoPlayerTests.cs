@@ -10,12 +10,12 @@ using VL.Lib.Basics.Video;
 
 namespace VL.FFmpeg.Tests;
 
-public sealed class FFmpegVideoPlayerTests
+public sealed class VideoPlayerTests
 {
     [Test]
     public void PublicNodeSurfaceContainsOnlyImplementedTransportControls()
     {
-        var update = typeof(FFmpegVideoPlayer).GetMethod(nameof(FFmpegVideoPlayer.Update));
+        var update = typeof(VideoPlayer).GetMethod(nameof(VideoPlayer.Update));
         var parameters = update!.GetParameters().Select(parameter => parameter.Name).ToArray();
 
         using (Assert.EnterMultipleScope())
@@ -40,12 +40,12 @@ public sealed class FFmpegVideoPlayerTests
     public void OnEndIsARisingEdge()
     {
         var factory = new TestSessionFactory();
-        using var source = new FFmpegVideoPlayer(factory);
+        using var source = new VideoPlayer(factory);
         var session = ((IVideoSource2)source).Start(CreateContext());
 
         source.PublishStatus(session!, PlaybackStatus.Idle with
         {
-            Phase = FFmpegPlaybackPhase.Ended,
+            Phase = PlaybackPhase.Ended,
             IsEnded = true
         });
 
@@ -55,7 +55,7 @@ public sealed class FFmpegVideoPlayerTests
         var cleared = UpdateAndGetOnEnd(source);
         source.PublishStatus(session!, PlaybackStatus.Idle with
         {
-            Phase = FFmpegPlaybackPhase.Ended,
+            Phase = PlaybackPhase.Ended,
             IsEnded = true
         });
         var second = UpdateAndGetOnEnd(source);
@@ -83,7 +83,7 @@ public sealed class FFmpegVideoPlayerTests
 
         try
         {
-            using var source = new FFmpegVideoPlayer();
+            using var source = new VideoPlayer();
             Update(source, filename!, play: true);
             var clock = new TestFrameClock { Time = 0.25d };
             using var session = ((IVideoSource2)source).Start(
@@ -119,8 +119,8 @@ public sealed class FFmpegVideoPlayerTests
                 Assert.That(memory.Length, Is.EqualTo(frame.Width * frame.Height * 4));
                 Assert.That(duration, Is.GreaterThan(0d));
                 Assert.That(position, Is.GreaterThanOrEqualTo(0d));
-                Assert.That(phase, Is.EqualTo(FFmpegPlaybackPhase.Playing));
-                Assert.That(decodePath, Is.EqualTo(FFmpegDecodePath.Software));
+                Assert.That(phase, Is.EqualTo(PlaybackPhase.Playing));
+                Assert.That(decodePath, Is.EqualTo(DecodePath.Software));
             }
         }
         finally
@@ -143,28 +143,28 @@ public sealed class FFmpegVideoPlayerTests
 
         try
         {
-            using var source = new FFmpegVideoPlayer();
+            using var source = new VideoPlayer();
             source.Update(
                 out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
                 filename: filename,
-                decodeMode: FFmpegDecodeMode.Hardware);
+                decodeMode: DecodeMode.Hardware);
             using var session = ((IVideoSource2)source).Start(CreateContext());
 
-            var phase = FFmpegPlaybackPhase.Idle;
+            var phase = PlaybackPhase.Idle;
             var status = string.Empty;
-            for (var attempt = 0; attempt < 100 && phase != FFmpegPlaybackPhase.Faulted; attempt++)
+            for (var attempt = 0; attempt < 100 && phase != PlaybackPhase.Faulted; attempt++)
             {
                 source.Update(
                     out _, out _, out _, out _, out _, out _, out _, out phase, out _, out status,
                     filename: filename,
-                    decodeMode: FFmpegDecodeMode.Hardware);
-                if (phase != FFmpegPlaybackPhase.Faulted)
+                    decodeMode: DecodeMode.Hardware);
+                if (phase != PlaybackPhase.Faulted)
                     Thread.Sleep(5);
             }
 
             using (Assert.EnterMultipleScope())
             {
-                Assert.That(phase, Is.EqualTo(FFmpegPlaybackPhase.Faulted));
+                Assert.That(phase, Is.EqualTo(PlaybackPhase.Faulted));
                 Assert.That(status, Does.Contain("Direct3D11"));
             }
         }
@@ -177,7 +177,7 @@ public sealed class FFmpegVideoPlayerTests
     [Test]
     public void UpdatePublishesChangedOptionsOnlyOnce()
     {
-        using var source = new FFmpegVideoPlayer();
+        using var source = new VideoPlayer();
 
         Update(source, seek: false);
         var first = source.Options;
@@ -196,7 +196,7 @@ public sealed class FFmpegVideoPlayerTests
     [Test]
     public void SeekUsesRisingEdgeGeneration()
     {
-        using var source = new FFmpegVideoPlayer();
+        using var source = new VideoPlayer();
 
         Update(source, seek: false);
         Update(source, seek: true);
@@ -218,20 +218,20 @@ public sealed class FFmpegVideoPlayerTests
     [Test]
     public void DecodeModeChangeCreatesOneNewOptionsRevision()
     {
-        using var source = new FFmpegVideoPlayer();
+        using var source = new VideoPlayer();
 
-        Update(source, seek: false, decodeMode: FFmpegDecodeMode.Software);
+        Update(source, seek: false, decodeMode: DecodeMode.Software);
         var software = source.Options;
-        Update(source, seek: false, decodeMode: FFmpegDecodeMode.Software);
+        Update(source, seek: false, decodeMode: DecodeMode.Software);
         var unchanged = source.Options;
-        Update(source, seek: false, decodeMode: FFmpegDecodeMode.Hardware);
+        Update(source, seek: false, decodeMode: DecodeMode.Hardware);
         var hardware = source.Options;
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(software.DecodeMode, Is.EqualTo(FFmpegDecodeMode.Software));
+            Assert.That(software.DecodeMode, Is.EqualTo(DecodeMode.Software));
             Assert.That(unchanged, Is.SameAs(software));
-            Assert.That(hardware.DecodeMode, Is.EqualTo(FFmpegDecodeMode.Hardware));
+            Assert.That(hardware.DecodeMode, Is.EqualTo(DecodeMode.Hardware));
             Assert.That(hardware.Revision, Is.EqualTo(software.Revision + 1));
         }
     }
@@ -239,7 +239,7 @@ public sealed class FFmpegVideoPlayerTests
     [Test]
     public void SourceAllowsOneSessionAndSignalsRetryAfterDispose()
     {
-        using var source = new FFmpegVideoPlayer();
+        using var source = new VideoPlayer();
         var videoSource = (IVideoSource2)source;
         var context = CreateContext();
 
@@ -264,7 +264,7 @@ public sealed class FFmpegVideoPlayerTests
     [Test]
     public void DisposedSourceCannotBeStartedAgain()
     {
-        var source = new FFmpegVideoPlayer();
+        var source = new VideoPlayer();
         var videoSource = (IVideoSource2)source;
         var context = CreateContext();
 
@@ -283,9 +283,9 @@ public sealed class FFmpegVideoPlayerTests
         => new(TestFrameClock.Instance, NullLogger.Instance);
 
     private static void Update(
-        FFmpegVideoPlayer source,
+        VideoPlayer source,
         bool seek,
-        FFmpegDecodeMode decodeMode = FFmpegDecodeMode.Auto)
+        DecodeMode decodeMode = DecodeMode.Auto)
     {
         source.Update(
             out _,
@@ -302,7 +302,7 @@ public sealed class FFmpegVideoPlayerTests
             decodeMode: decodeMode);
     }
 
-    private static bool UpdateAndGetOnEnd(FFmpegVideoPlayer source)
+    private static bool UpdateAndGetOnEnd(VideoPlayer source)
     {
         source.Update(
             out _,
@@ -318,17 +318,17 @@ public sealed class FFmpegVideoPlayerTests
         return onEnd;
     }
 
-    private static void Update(FFmpegVideoPlayer source, string filename, bool play)
+    private static void Update(VideoPlayer source, string filename, bool play)
         => Update(source, filename, play, out _, out _, out _, out _);
 
     private static void Update(
-        FFmpegVideoPlayer source,
+        VideoPlayer source,
         string filename,
         bool play,
         out double position,
         out double duration,
-        out FFmpegPlaybackPhase phase,
-        out FFmpegDecodePath decodePath)
+        out PlaybackPhase phase,
+        out DecodePath decodePath)
     {
         source.Update(
             out _,
@@ -397,7 +397,7 @@ public sealed class FFmpegVideoPlayerTests
 
     private sealed class TestSessionFactory : IFFmpegPlayerSessionFactory
     {
-        public IVideoPlayer Create(FFmpegVideoPlayer source, VideoPlaybackContext context)
+        public IVideoPlayer Create(VideoPlayer source, VideoPlaybackContext context)
             => new TestVideoPlayer();
     }
 

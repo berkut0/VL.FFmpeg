@@ -10,7 +10,7 @@ public sealed class FFmpegRuntimeTests
     [Test]
     public void ProcessNodeAssemblyUsesImportAsIs()
     {
-        var attributes = typeof(FFmpegVideoPlayer).Assembly.GetCustomAttributesData();
+        var attributes = typeof(VideoPlayer).Assembly.GetCustomAttributesData();
         var importAsIs = attributes.Single(
             attribute => attribute.AttributeType.FullName == "VL.Core.Import.ImportAsIsAttribute");
         var namedArguments = importAsIs.NamedArguments.ToDictionary(
@@ -26,18 +26,18 @@ public sealed class FFmpegRuntimeTests
             Assert.That(namedArguments["Namespace"], Is.EqualTo("VL.FFmpeg.Nodes"));
             Assert.That(namedArguments["Category"], Is.EqualTo("Video.FFmpeg"));
 
-            var importedTypes = typeof(FFmpegVideoPlayer).Assembly.ExportedTypes
+            var importedTypes = typeof(VideoPlayer).Assembly.ExportedTypes
                 .Where(type => type.Namespace == "VL.FFmpeg.Nodes")
                 .Select(type => type.Name)
                 .OrderBy(name => name)
                 .ToArray();
             Assert.That(importedTypes, Is.EqualTo(new[]
             {
-                nameof(FFmpegDecodeMode),
-                nameof(FFmpegDecodePath),
-                nameof(FFmpegPlaybackPhase),
-                nameof(FFmpegRuntimeDiagnostics),
-                nameof(FFmpegVideoPlayer)
+                nameof(DecodeMode),
+                nameof(DecodePath),
+                nameof(PlaybackPhase),
+                nameof(RuntimeDiagnostics),
+                nameof(VideoPlayer)
             }));
         }
     }
@@ -85,7 +85,7 @@ public sealed class FFmpegRuntimeTests
     [Test]
     public void RelocatedBindingIsEmbeddedInTheNodeAssembly()
     {
-        var nodeAssembly = typeof(FFmpegVideoPlayer).Assembly;
+        var nodeAssembly = typeof(VideoPlayer).Assembly;
         var references = nodeAssembly.GetReferencedAssemblies();
 
         using (Assert.EnterMultipleScope())

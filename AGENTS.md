@@ -14,6 +14,10 @@ renderer-specific public code becomes necessary.
 - The process-node assembly uses one `ImportAsIs` for `VL.FFmpeg.Nodes`.
   Do not replace it with per-type `ImportType` attributes without a Gamma
   PackageCompiler regression test.
+- Public node names use established Gamma vocabulary and stay concise in their
+  resolved category. Do not repeat package, backend or category terms unless
+  needed to distinguish sibling nodes; name specialized variants as
+  `Name (Variant)`.
 - Workers must have bounded queues, cancellation and deterministic shutdown.
 - Native FFmpeg libraries load from verified absolute paths. Never use
   process-global `SetDllDirectory`.

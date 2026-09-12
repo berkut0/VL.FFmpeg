@@ -13,7 +13,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     private const double PresentationEpsilon = 0.001;
 
     private readonly object _syncRoot = new();
-    private readonly FFmpegVideoPlayer _source;
+    private readonly VideoPlayer _source;
     private readonly VideoPlaybackContext _context;
     private readonly nint _graphicsDevice;
     private readonly GraphicsDeviceType _graphicsDeviceType;
@@ -37,7 +37,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     private FFmpegMediaInfo? _mediaInfo;
     private Exception? _decodeFault;
     private TimeSpan _latestMediaTime;
-    private FFmpegDecodePath _decodePath;
+    private DecodePath _decodePath;
     private string _decodeStatus = "Software BGRA8";
     private long _nextRequestGeneration;
     private double _timelineSeconds;
@@ -50,7 +50,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     private bool _hasPresentedFrame;
     private bool _disposed;
 
-    public FFmpegPlayerSession(FFmpegVideoPlayer source, VideoPlaybackContext context)
+    public FFmpegPlayerSession(VideoPlayer source, VideoPlaybackContext context)
     {
         _source = source;
         _context = context;
@@ -287,7 +287,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                         ? decoder.DecodeStatus
                         : $"Software BGRA8 fallback; {fallbackReason}";
                     if (!decoder.HardwareConfigured)
-                        _decodePath = FFmpegDecodePath.Software;
+                        _decodePath = DecodePath.Software;
                 }
                 PublishWorkerState(
                     opening: false,
@@ -314,15 +314,15 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 });
             }
             catch (FFmpegHardwareException exception) when (
-                request.DecodeMode == FFmpegDecodeMode.Auto
-                && effectiveMode != FFmpegDecodeMode.Software)
+                request.DecodeMode == DecodeMode.Auto
+                && effectiveMode != DecodeMode.Software)
             {
                 fallbackReason = exception.Message;
-                effectiveMode = FFmpegDecodeMode.Software;
+                effectiveMode = DecodeMode.Software;
                 initialPosition = lastMediaTime;
                 lock (_syncRoot)
                 {
-                    _decodePath = FFmpegDecodePath.Software;
+                    _decodePath = DecodePath.Software;
                     _decodeStatus = $"Software BGRA8 fallback; {fallbackReason}";
                 }
                 PublishWorkerState(
@@ -426,7 +426,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         {
             return PlaybackStatus.Idle with
             {
-                Phase = FFmpegPlaybackPhase.Faulted,
+                Phase = PlaybackPhase.Faulted,
                 DecodePath = _decodePath,
                 Message = _decodeFault.Message
             };
@@ -439,7 +439,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         {
             return PlaybackStatus.BackendPending with
             {
-                Phase = _opening ? FFmpegPlaybackPhase.Opening : FFmpegPlaybackPhase.Buffering,
+                Phase = _opening ? PlaybackPhase.Opening : PlaybackPhase.Buffering,
                 DecodePath = _decodePath,
                 Message = _opening ? "Opening media with FFmpeg." : "Waiting for decoded video frames."
             };
@@ -448,10 +448,10 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         var noQueuedFrames = !_frames.Reader.TryPeek(out _);
         var ended = _endOfStream && noQueuedFrames;
         var phase = ended
-            ? FFmpegPlaybackPhase.Ended
+            ? PlaybackPhase.Ended
             : _options.Play
-                ? FFmpegPlaybackPhase.Playing
-                : FFmpegPlaybackPhase.Paused;
+                ? PlaybackPhase.Playing
+                : PlaybackPhase.Paused;
 
         return new PlaybackStatus(
             Phase: phase,
@@ -486,13 +486,13 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             status = fault is not null
                 ? PlaybackStatus.Idle with
                 {
-                    Phase = FFmpegPlaybackPhase.Faulted,
+                    Phase = PlaybackPhase.Faulted,
                     DecodePath = _decodePath,
                     Message = message
                 }
                 : PlaybackStatus.BackendPending with
                 {
-                    Phase = opening ? FFmpegPlaybackPhase.Opening : FFmpegPlaybackPhase.Buffering,
+                    Phase = opening ? PlaybackPhase.Opening : PlaybackPhase.Buffering,
                     DecodePath = _decodePath,
                     Duration = mediaInfo?.Duration.TotalSeconds ?? _mediaInfo?.Duration.TotalSeconds ?? 0d,
                     Message = message
@@ -515,8 +515,8 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         _mediaInfo = null;
         _decodeFault = null;
         _latestMediaTime = initialPosition;
-        _decodePath = FFmpegDecodePath.None;
-        _decodeStatus = options.DecodeMode == FFmpegDecodeMode.Hardware
+        _decodePath = DecodePath.None;
+        _decodeStatus = options.DecodeMode == DecodeMode.Hardware
             ? "Waiting for required D3D11VA decode."
             : "Waiting for decoder selection.";
         _timelineSeconds = initialPosition.TotalSeconds;
@@ -578,7 +578,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         long Generation,
         string Filename,
         TimeSpan InitialPosition,
-        FFmpegDecodeMode DecodeMode,
+        DecodeMode DecodeMode,
         CancellationToken Cancellation);
 
     private sealed record QueuedFrame(
@@ -596,6 +596,6 @@ internal sealed class FFmpegPlayerSessionFactory : IFFmpegPlayerSessionFactory
     {
     }
 
-    public IVideoPlayer Create(FFmpegVideoPlayer source, VideoPlaybackContext context)
+    public IVideoPlayer Create(VideoPlayer source, VideoPlaybackContext context)
         => new FFmpegPlayerSession(source, context);
 }

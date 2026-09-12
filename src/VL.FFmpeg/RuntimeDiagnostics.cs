@@ -7,7 +7,7 @@ namespace VL.FFmpeg.Nodes;
 /// <summary>
 /// Diagnoses the pinned FFmpeg 8.1 native runtime used by VL.FFmpeg.
 /// </summary>
-public static class FFmpegRuntimeDiagnostics
+public static class RuntimeDiagnostics
 {
     /// <summary>
     /// Resolves and probes the native libraries without changing the process DLL search path.

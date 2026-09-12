@@ -8,7 +8,7 @@ internal sealed record PlaybackOptions(
     bool Loop,
     double SeekTime,
     long SeekRequestId,
-    FFmpegDecodeMode DecodeMode,
+    DecodeMode DecodeMode,
     long Revision)
 {
     public static readonly PlaybackOptions Default = new(
@@ -17,6 +17,6 @@ internal sealed record PlaybackOptions(
         Loop: false,
         SeekTime: 0d,
         SeekRequestId: 0,
-        DecodeMode: FFmpegDecodeMode.Auto,
+        DecodeMode: DecodeMode.Auto,
         Revision: 0);
 }

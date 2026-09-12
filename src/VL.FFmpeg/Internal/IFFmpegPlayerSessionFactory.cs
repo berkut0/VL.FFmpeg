@@ -5,5 +5,5 @@ namespace VL.FFmpeg.Internal;
 
 internal interface IFFmpegPlayerSessionFactory
 {
-    IVideoPlayer Create(FFmpegVideoPlayer source, VideoPlaybackContext context);
+    IVideoPlayer Create(VideoPlayer source, VideoPlaybackContext context);
 }
