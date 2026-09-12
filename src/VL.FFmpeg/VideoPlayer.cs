@@ -16,10 +16,9 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
 {
     private readonly object _syncRoot = new();
     private readonly IFFmpegPlayerSessionFactory _sessionFactory;
-    private PlaybackOptions _options = PlaybackOptions.Default;
+    private readonly PlaybackControl _control;
     private PlaybackStatus _status = PlaybackStatus.Idle;
     private IVideoPlayer? _currentSession;
-    private bool _lastSeek;
     private bool _wasEnded;
     private bool _disposed;
     private int _changedTicket;
@@ -36,6 +35,7 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
     internal VideoPlayer(IFFmpegPlayerSessionFactory sessionFactory)
     {
         _sessionFactory = sessionFactory ?? throw new ArgumentNullException(nameof(sessionFactory));
+        _control = new PlaybackControl(OptionsChanged);
     }
 
     /// <summary>
@@ -60,43 +60,7 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
         [Pin(Visibility = PinVisibility.Optional)] DecodeMode decodeMode = DecodeMode.Auto)
     {
         ThrowIfDisposed();
-        PlaybackOptions? changedOptions = null;
-
-        filename ??= string.Empty;
-        seekTime = Math.Max(0d, seekTime);
-
-        var current = Volatile.Read(ref _options);
-        var seekRequestId = current.SeekRequestId;
-        if (seek && !_lastSeek)
-            seekRequestId++;
-        _lastSeek = seek;
-
-        if (!string.Equals(current.Filename, filename, StringComparison.Ordinal)
-            || current.Play != play
-            || current.Loop != loop
-            || current.SeekTime != seekTime
-            || current.SeekRequestId != seekRequestId
-            || current.DecodeMode != decodeMode)
-        {
-            var next = new PlaybackOptions(
-                Filename: filename,
-                Play: play,
-                Loop: loop,
-                SeekTime: seekTime,
-                SeekRequestId: seekRequestId,
-                DecodeMode: decodeMode,
-                Revision: current.Revision + 1);
-            Volatile.Write(ref _options, next);
-            changedOptions = next;
-        }
-
-        if (changedOptions is not null)
-        {
-            IPlaybackOptionsSink? sink;
-            lock (_syncRoot)
-                sink = _currentSession as IPlaybackOptionsSink;
-            sink?.OptionsChanged(changedOptions);
-        }
+        _control.UpdateFromPins(filename, play, loop, seekTime, seek, decodeMode);
 
         var snapshot = Volatile.Read(ref _status);
         position = snapshot.Position;
@@ -129,7 +93,15 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
 
     int IVideoSource2.ChangedTicket => Volatile.Read(ref _changedTicket);
 
-    internal PlaybackOptions Options => Volatile.Read(ref _options);
+    internal PlaybackOptions Options => _control.Options;
+
+    private void OptionsChanged(PlaybackOptions options)
+    {
+        IPlaybackOptionsSink? sink;
+        lock (_syncRoot)
+            sink = _currentSession as IPlaybackOptionsSink;
+        sink?.OptionsChanged(options);
+    }
 
     internal void PublishStatus(IVideoPlayer session, PlaybackStatus status)
     {

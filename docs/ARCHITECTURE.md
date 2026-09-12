@@ -18,6 +18,7 @@ There is no Skia- or Stride-specific public API. Both renderers consume
 - `FFmpegVideoDecoder` owns demux, codec and software/D3D11VA decode contexts.
 - `FFmpegPlayerSession` owns playback coordination, the bounded frame queue and worker.
 - `PlaybackTimeline` maps clock time and transport state to media time.
+- `PlaybackControl` serializes option changes before notifying the active session.
 - `VideoPlayer` is the Gamma process node and `IVideoSource2` boundary.
 - `D3D11TexturePool` converts NV12/P010 decoder surfaces into leased BGRA8
   textures on the consumer device.
