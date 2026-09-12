@@ -18,7 +18,7 @@ internal unsafe sealed class D3D11TextureLease : IDisposable
             (nint)slot.Texture,
             pool.Width,
             pool.Height,
-            PixelFormat.B8G8R8A8);
+            pool.PixelFormat);
     }
 
     public VideoTexture Texture { get; }
@@ -41,9 +41,12 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
     private readonly ID3D11DeviceContext* _deviceContext;
     private readonly ID3D11VideoDevice* _videoDevice;
     private readonly ID3D11VideoContext* _videoContext;
+    private void* _videoContext1;
     private readonly nint _lockFunction;
     private readonly nint _unlockFunction;
     private readonly void* _lockContext;
+    private readonly bool _linearOutput;
+    private readonly int _outputFormat;
     private readonly List<Slot> _slots = [];
 
     private void* _enumerator;
@@ -51,7 +54,7 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
     private int _inputFormat;
     private bool _disposed;
 
-    internal D3D11TexturePool(AVD3D11VADeviceContext* context)
+    internal D3D11TexturePool(AVD3D11VADeviceContext* context, bool linearOutput)
     {
         if (context is null)
             throw new ArgumentNullException(nameof(context));
@@ -70,6 +73,10 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         _lockFunction = context->@lock.Pointer;
         _unlockFunction = context->unlock.Pointer;
         _lockContext = context->lock_ctx;
+        _linearOutput = linearOutput;
+        _outputFormat = linearOutput
+            ? D3D11Interop.DxgiFormatR16G16B16A16Float
+            : D3D11Interop.DxgiFormatB8G8R8A8Unorm;
 
         D3D11Interop.AddRef(_device);
         D3D11Interop.AddRef(_deviceContext);
@@ -78,9 +85,15 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         try
         {
             D3D11Interop.EnableMultithreadProtection(_deviceContext);
+            _videoContext1 = D3D11Interop.TryGetVideoContext1(_videoContext);
+            if (_linearOutput && _videoContext1 is null)
+                throw new FFmpegHardwareException(
+                    "Linear video output requires ID3D11VideoContext1 color-space support.");
         }
         catch
         {
+            D3D11Interop.Release(_videoContext1);
+            _videoContext1 = null;
             D3D11Interop.Release(_videoContext);
             D3D11Interop.Release(_videoDevice);
             D3D11Interop.Release(_deviceContext);
@@ -92,6 +105,10 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
     internal int Width { get; private set; }
 
     internal int Height { get; private set; }
+
+    internal PixelFormat PixelFormat => _linearOutput
+        ? PixelFormat.R16G16B16A16F
+        : PixelFormat.B8G8R8A8;
 
     internal D3D11TextureLease Convert(
         AVFrame* frame,
@@ -111,6 +128,31 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         {
             throw new FFmpegHardwareException(
                 $"D3D11VA returned unsupported DXGI format {sourceDescription.Format}; expected NV12 or P010.");
+        }
+
+        VideoColorInfo color;
+        int inputColorSpace;
+        try
+        {
+            color = VideoColorInfo.Resolve(
+                frame->colorspace,
+                frame->color_range,
+                frame->color_trc,
+                frame->height);
+            inputColorSpace = color.GetDxgiInputColorSpace();
+        }
+        catch (NotSupportedException exception)
+        {
+            throw new FFmpegHardwareException(exception.Message, exception);
+        }
+        if (_linearOutput && color.Transfer is not (
+                VideoTransferFunction.Bt709
+                or VideoTransferFunction.Srgb
+                or VideoTransferFunction.Gamma22))
+        {
+            throw new FFmpegHardwareException(color.IsHdr
+                ? "HDR tone mapping is not implemented for linear output."
+                : $"D3D11 cannot linearize the {color.TransferName} transfer function.");
         }
 
         Slot slot;
@@ -138,18 +180,16 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
                     sourceTexture,
                     _enumerator,
                     checked((uint)(nint)frame->data[1]));
-                var fullRange = frame->color_range == AVColorRange.AVCOL_RANGE_JPEG;
-                var bt709 = frame->colorspace == AVColorSpace.AVCOL_SPC_BT709
-                    || (frame->colorspace == AVColorSpace.AVCOL_SPC_UNSPECIFIED && frame->height >= 720);
                 D3D11Interop.ConfigureAndBlit(
                     _videoContext,
+                    _videoContext1,
                     _processor,
                     inputView,
                     slot.OutputView,
                     frame->width,
                     frame->height,
-                    fullRange,
-                    bt709);
+                    inputColorSpace,
+                    _linearOutput);
                 D3D11Interop.Flush(_deviceContext);
             }
             finally
@@ -160,12 +200,10 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             var formatName = sourceDescription.Format == D3D11Interop.DxgiFormatP010
                 ? "P010"
                 : "NV12";
-            var hdr = frame->colorspace is AVColorSpace.AVCOL_SPC_BT2020_NCL or AVColorSpace.AVCOL_SPC_BT2020_CL
-                || frame->color_trc is AVColorTransferCharacteristic.AVCOL_TRC_SMPTE2084
-                    or AVColorTransferCharacteristic.AVCOL_TRC_ARIB_STD_B67;
-            status = hdr
-                ? $"D3D11VA {formatName} -> GPU BGRA8; HDR tone mapping is not implemented"
-                : $"D3D11VA {formatName} -> GPU BGRA8";
+            var outputName = _linearOutput ? "linear GPU RGBA16F" : "nonlinear GPU BGRA8";
+            status = $"D3D11VA {formatName}, {color.Description} -> {outputName}; transfer {color.TransferName}";
+            if (color.IsHdr)
+                status += "; HDR tone mapping is not implemented";
             return new D3D11TextureLease(this, slot);
         }
         catch
@@ -219,6 +257,8 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             _processor = null;
             D3D11Interop.Release(_enumerator);
             _enumerator = null;
+            D3D11Interop.Release(_videoContext1);
+            _videoContext1 = null;
             D3D11Interop.Release(_videoContext);
             D3D11Interop.Release(_videoDevice);
             D3D11Interop.Release(_deviceContext);
@@ -251,13 +291,13 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             D3D11Interop.CheckVideoProcessorFormat(_enumerator, inputFormat, requiredFlags: 1);
             D3D11Interop.CheckVideoProcessorFormat(
                 _enumerator,
-                D3D11Interop.DxgiFormatB8G8R8A8Unorm,
+                _outputFormat,
                 requiredFlags: 2);
             _processor = D3D11Interop.CreateVideoProcessor(_videoDevice, _enumerator);
 
             for (var index = 0; index < Capacity; index++)
             {
-                var texture = D3D11Interop.CreateTexture(_device, width, height);
+                var texture = D3D11Interop.CreateTexture(_device, width, height, _outputFormat);
                 void* outputView = null;
                 try
                 {

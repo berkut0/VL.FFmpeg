@@ -20,17 +20,18 @@ There is no Skia- or Stride-specific public API. Both renderers consume
 - `PlaybackTimeline` maps clock time and transport state to media time.
 - `PlaybackControl` serializes option changes before notifying the active session.
 - `VideoPlayer` is the Gamma process node and `IVideoSource2` boundary.
-- `D3D11TexturePool` converts NV12/P010 decoder surfaces into leased BGRA8
-  textures on the consumer device.
+- `D3D11TexturePool` converts NV12/P010 decoder surfaces into leased nonlinear
+  BGRA8 or linear RGBA16F textures on the consumer device.
 - `FFmpegRuntime` resolves the pinned Windows x64 native runtime.
 - Relocated FFmpeg.AutoGen source is compiled into `VL.FFmpeg.dll` under
   `VL.FFmpeg.Interop.AutoGen`. Gamma imports only `VL.FFmpeg.Nodes`.
 
 ## Scope
 
-Implemented: local-file software and shared-device D3D11VA decode, memory- and
-texture-backed BGRA8 frames, play/pause, seek, EOF and basic loop. Auto mode
-falls back to software; explicit Hardware mode faults when unavailable.
+Implemented: local-file software and shared-device D3D11VA decode, color
+matrix/range conversion, nonlinear BGRA8 and linear RGBA16F frames,
+play/pause, seek, EOF and basic loop. Auto mode falls back to software;
+explicit Hardware mode faults when unavailable.
 
 Not implemented: audio, D3D11VA private-device CPU transfer, playback rate,
 subtitles, encoding, camera capture, HDR tone mapping and network streams.
@@ -45,3 +46,4 @@ subtitles, encoding, camera capture, HDR tone mapping and network streams.
 - A GPU texture slot is not reused until the consumer handle releases it.
 - D3D11VA binds to the device from `VideoPlaybackContext`. The package has no
   renderer dependency and does not create a hidden graphics device.
+- Frame format follows `VideoPlaybackContext.UsesLinearColorspace`.

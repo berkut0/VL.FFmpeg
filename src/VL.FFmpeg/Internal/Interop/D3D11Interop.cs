@@ -7,6 +7,7 @@ namespace VL.FFmpeg.Internal.Interop;
 internal static unsafe class D3D11Interop
 {
     internal const int DxgiFormatB8G8R8A8Unorm = 87;
+    internal const int DxgiFormatR16G16B16A16Float = 10;
     internal const int DxgiFormatNv12 = 103;
     internal const int DxgiFormatP010 = 104;
 
@@ -15,6 +16,8 @@ internal static unsafe class D3D11Interop
 
     private static readonly Guid Id3D11Multithread =
         new("9B7E4E00-342C-4106-A19F-4F2704F689F0");
+    private static readonly Guid Id3D11VideoContext1 =
+        new("A7F026DA-A5F8-4487-A564-15E34357651E");
 
     internal static uint AddRef(void* instance)
     {
@@ -30,6 +33,18 @@ internal static unsafe class D3D11Interop
             return 0;
         var vtable = *(void***)instance;
         return ((delegate* unmanaged[Stdcall]<void*, uint>)vtable[2])(instance);
+    }
+
+    internal static void* TryGetVideoContext1(ID3D11VideoContext* context)
+    {
+        void* context1 = null;
+        var iid = Id3D11VideoContext1;
+        var query = (delegate* unmanaged[Stdcall]<ID3D11VideoContext*, Guid*, void**, int>)
+            context->lpVtbl->QueryInterface;
+        if (query(context, &iid, &context1) >= 0)
+            return context1;
+        Release(context1);
+        return null;
     }
 
     internal static void EnableMultithreadProtection(ID3D11DeviceContext* context)
@@ -66,7 +81,8 @@ internal static unsafe class D3D11Interop
     internal static ID3D11Texture2D* CreateTexture(
         ID3D11Device* device,
         int width,
-        int height)
+        int height,
+        int format)
     {
         var description = new D3D11Texture2DDesc
         {
@@ -74,7 +90,7 @@ internal static unsafe class D3D11Interop
             Height = checked((uint)height),
             MipLevels = 1,
             ArraySize = 1,
-            Format = DxgiFormatB8G8R8A8Unorm,
+            Format = format,
             SampleDescription = new DxgiSampleDesc { Count = 1 },
             Usage = 0,
             BindFlags = BindShaderResource | BindRenderTarget
@@ -196,32 +212,52 @@ internal static unsafe class D3D11Interop
 
     internal static void ConfigureAndBlit(
         ID3D11VideoContext* context,
+        void* context1,
         void* processor,
         void* inputView,
         void* outputView,
         int width,
         int height,
-        bool fullRange,
-        bool bt709)
+        int inputColorSpace,
+        bool linearOutput)
     {
         var rectangle = new D3D11Rect { Right = width, Bottom = height };
-        var inputColorSpace = new D3D11VideoProcessorColorSpace
+        if (context1 is not null)
         {
-            Value = (bt709 ? 1u << 2 : 0u) | ((fullRange ? 2u : 1u) << 4)
-        };
-        var outputColorSpace = new D3D11VideoProcessorColorSpace
+            var vtable1 = *(void***)context1;
+            ((delegate* unmanaged[Stdcall]<void*, void*, int, void>)vtable1[70])(
+                context1,
+                processor,
+                linearOutput ? 1 : 0);
+            ((delegate* unmanaged[Stdcall]<void*, void*, uint, int, void>)vtable1[74])(
+                context1,
+                processor,
+                0,
+                inputColorSpace);
+        }
+        else
         {
-            Value = 2u << 4
-        };
+            if (linearOutput || inputColorSpace is 10 or 11)
+                throw new FFmpegHardwareException(
+                    "The D3D11 device does not expose color-space-aware video processing.");
+
+            var fullRange = inputColorSpace is 7 or 9;
+            var bt709 = inputColorSpace is 8 or 9;
+            var input = new D3D11VideoProcessorColorSpace
+            {
+                Value = (bt709 ? 1u << 2 : 0u) | ((fullRange ? 2u : 1u) << 4)
+            };
+            var output = new D3D11VideoProcessorColorSpace { Value = 2u << 4 };
+            ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, D3D11VideoProcessorColorSpace*, void>)
+                context->lpVtbl->VideoProcessorSetOutputColorSpace)(context, processor, &output);
+            ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, uint, D3D11VideoProcessorColorSpace*, void>)
+                context->lpVtbl->VideoProcessorSetStreamColorSpace)(context, processor, 0, &input);
+        }
 
         ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, int, D3D11Rect*, void>)
             context->lpVtbl->VideoProcessorSetOutputTargetRect)(context, processor, 1, &rectangle);
-        ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, D3D11VideoProcessorColorSpace*, void>)
-            context->lpVtbl->VideoProcessorSetOutputColorSpace)(context, processor, &outputColorSpace);
         ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, uint, uint, void>)
             context->lpVtbl->VideoProcessorSetStreamFrameFormat)(context, processor, 0, 0);
-        ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, uint, D3D11VideoProcessorColorSpace*, void>)
-            context->lpVtbl->VideoProcessorSetStreamColorSpace)(context, processor, 0, &inputColorSpace);
         ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, uint, int, D3D11Rect*, void>)
             context->lpVtbl->VideoProcessorSetStreamSourceRect)(context, processor, 0, 1, &rectangle);
         ((delegate* unmanaged[Stdcall]<ID3D11VideoContext*, void*, uint, int, D3D11Rect*, void>)
@@ -242,7 +278,8 @@ internal static unsafe class D3D11Interop
             uint,
             D3D11VideoProcessorStream*,
             int>)context->lpVtbl->VideoProcessorBlt;
-        Check(blit(context, processor, outputView, 0, 1, &stream), "convert a D3D11VA frame to BGRA8");
+        Check(blit(context, processor, outputView, 0, 1, &stream),
+            linearOutput ? "convert a D3D11VA frame to linear RGBA16F" : "convert a D3D11VA frame to BGRA8");
     }
 
     internal static void Check(int result, string operation)

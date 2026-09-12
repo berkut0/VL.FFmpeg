@@ -80,6 +80,41 @@ public sealed class FFmpegVideoDecoderTests
         }
     }
 
+    [Test]
+    public void LinearConsumerReceivesRgba16fSoftwareFrame()
+    {
+        var filename = FindGammaReferenceClip();
+        if (filename is null)
+            Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
+
+        DecodedVideoFrame? decodedFrame = null;
+        using var decoder = new FFmpegVideoDecoder(
+            filename,
+            TimeSpan.Zero,
+            CancellationToken.None,
+            FindRepositoryRuntime(),
+            usesLinearColorspace: true);
+
+        decoder.Decode(frame =>
+        {
+            decodedFrame = frame;
+            return false;
+        });
+
+        using var handle = decodedFrame!.CreateProvider().GetHandle();
+        var hasMemory = handle.Resource.TryGetMemory(out var memory);
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(handle.Resource.PixelFormat,
+                Is.EqualTo(VL.Lib.Basics.Imaging.PixelFormat.R16G16B16A16F));
+            Assert.That(hasMemory, Is.True);
+            Assert.That(memory.Length,
+                Is.EqualTo(checked(decodedFrame.Width * decodedFrame.Height * 8)));
+            Assert.That(decodedFrame.DecodeStatus, Does.Contain("linear RGBA16F"));
+        }
+        decodedFrame.Dispose();
+    }
+
     private static string? FindGammaReferenceClip()
     {
         const string vvvvRoot = @"C:\Program Files\vvvv";

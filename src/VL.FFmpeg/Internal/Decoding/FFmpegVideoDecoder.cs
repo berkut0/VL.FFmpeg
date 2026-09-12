@@ -81,7 +81,8 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 
     /// <summary>
     /// Decodes until EOF, cancellation, or until <paramref name="acceptFrame"/>
-    /// returns false. Returning false is a normal early stop.
+    /// returns false. Returning false is a normal early stop. The callback owns
+    /// every frame it receives.
     /// </summary>
     public void Decode(Func<DecodedVideoFrame, bool> acceptFrame)
     {
@@ -295,7 +296,10 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
                 var frame = ConvertFrame(_frame);
                 _decodedFrameCount++;
                 if (frame.Timecode + TimeSpan.FromMilliseconds(1) < _minimumTimecode)
+                {
+                    frame.Dispose();
                     continue;
+                }
                 if (!acceptFrame(frame))
                     return false;
             }
@@ -322,8 +326,6 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
                 MediaInfo.FrameRate,
                 _cancellationToken,
                 out var hardwareStatus);
-            if (_usesLinearColorspace)
-                hardwareStatus += "; linear consumer colorspace";
             _decodeStatus = hardwareStatus;
             return new GpuDecodedVideoFrame(
                 lease,
@@ -340,8 +342,20 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             throw new FFmpegHardwareException(reason);
         }
 
-        if (_hardwareConfigured && !_hardwareFormatSelected)
-            _decodeStatus = $"Software BGRA8 fallback; D3D11VA was not selected ({pixelFormat})";
+        var fallbackStatus = _hardwareConfigured && !_hardwareFormatSelected
+            ? $"Hardware fallback; D3D11VA was not selected ({pixelFormat}); "
+            : string.Empty;
+        var color = VideoColorInfo.Resolve(
+            frame->colorspace,
+            frame->color_range,
+            frame->color_trc,
+            frame->height);
+        if (_usesLinearColorspace && color.IsHdr)
+            throw new NotSupportedException("HDR tone mapping is not implemented for linear output.");
+
+        var outputPixelFormat = _usesLinearColorspace
+            ? AVPixelFormat.AV_PIX_FMT_RGBA64LE
+            : AVPixelFormat.AV_PIX_FMT_BGRA;
         _swsContext = ffmpeg.sws_getCachedContext(
             _swsContext,
             frame->width,
@@ -349,7 +363,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             pixelFormat,
             frame->width,
             frame->height,
-            AVPixelFormat.AV_PIX_FMT_BGRA,
+            outputPixelFormat,
             (int)SwsFlags.SWS_BILINEAR,
             null,
             null,
@@ -357,7 +371,26 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         if (_swsContext is null)
             throw new InvalidOperationException($"FFmpeg could not convert pixel format {pixelFormat} to BGRA.");
 
-        var stride = checked(frame->width * 4);
+        var pixelDescriptor = ffmpeg.av_pix_fmt_desc_get(pixelFormat);
+        var sourceIsRgb = pixelDescriptor is not null
+            && (pixelDescriptor->flags & (ulong)ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
+        if (!sourceIsRgb)
+        {
+            var coefficients = *(int_array4*)ffmpeg.sws_getCoefficients(color.SwsColorSpace);
+            var colorspaceResult = ffmpeg.sws_setColorspaceDetails(
+                _swsContext,
+                in coefficients,
+                color.FullRange ? 1 : 0,
+                in coefficients,
+                dstRange: 1,
+                brightness: 0,
+                contrast: 1 << 16,
+                saturation: 1 << 16);
+            if (colorspaceResult < 0)
+                Throw(colorspaceResult, $"configure {color.Description} software color conversion");
+        }
+
+        var stride = checked(frame->width * (_usesLinearColorspace ? 8 : 4));
         var pixels = new byte[checked(stride * frame->height)];
         fixed (byte* destination = pixels)
         {
@@ -383,20 +416,30 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             }
         }
 
+        var outputDescription = _usesLinearColorspace ? "linear RGBA16F" : "nonlinear BGRA8";
+        _decodeStatus = $"{fallbackStatus}Software {color.Description} -> {outputDescription}; transfer {color.TransferName}";
+        if (color.IsHdr)
+            _decodeStatus += "; HDR tone mapping is not implemented";
+        if (_usesLinearColorspace)
+            color.LinearizeRgba64(pixels);
+
         return new CpuDecodedVideoFrame(
-            bgra: pixels,
+            pixels: pixels,
             width: frame->width,
             height: frame->height,
             timecode: ReadTimecode(frame),
             frameRate: MediaInfo.FrameRate,
-            decodeStatus: _decodeStatus);
+            decodeStatus: _decodeStatus,
+            linear: _usesLinearColorspace);
     }
 
     private void ConfigureHardwareDecoder()
     {
         if (_decodeMode == DecodeMode.Software)
         {
-            _decodeStatus = "Software BGRA8";
+            _decodeStatus = _usesLinearColorspace
+                ? "Software linear RGBA16F"
+                : "Software nonlinear BGRA8";
             return;
         }
 
@@ -405,7 +448,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         {
             if (_decodeMode == DecodeMode.Hardware)
                 throw new FFmpegHardwareException("Hardware mode requires a Direct3D11 consumer with Prefer GPU enabled.");
-            _decodeStatus = "Software BGRA8 fallback; consumer supplied no Direct3D11 device";
+            _decodeStatus = _usesLinearColorspace
+                ? "Software linear RGBA16F fallback; consumer supplied no Direct3D11 device"
+                : "Software nonlinear BGRA8 fallback; consumer supplied no Direct3D11 device";
             return;
         }
 
@@ -434,7 +479,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _codecContext->get_format = _getFormatCallback;
             _codecContext->hw_device_ctx = codecReference;
             _codecContext->extra_hw_frames = 8;
-            _texturePool = new D3D11TexturePool(d3d11Context);
+            _texturePool = new D3D11TexturePool(d3d11Context, _usesLinearColorspace);
             _hardwareConfigured = true;
             _decodeStatus = "D3D11VA configured on the consumer device";
         }
@@ -458,7 +503,8 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             }
             _codecContext->get_format = default;
             _hardwareConfigured = false;
-            _decodeStatus = $"Software BGRA8 fallback; {exception.Message}";
+            var output = _usesLinearColorspace ? "linear RGBA16F" : "nonlinear BGRA8";
+            _decodeStatus = $"Software {output} fallback; {exception.Message}";
         }
     }
 

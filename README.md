@@ -13,6 +13,8 @@ Windows x64. Alpha.
 - Play, pause, seek, end-of-file and basic looping
 - Works with Skia and Stride through the standard video nodes
 - GPU decode when the renderer can take a texture, otherwise software
+- BT.601/BT.709/BT.2020 matrix and full/limited-range conversion
+- Nonlinear BGRA8 or linear RGBA16F output according to the consumer
 - Keeps decoding off the render thread
 
 `Decode Mode` defaults to `Auto`: GPU when the consumer asks for it, software

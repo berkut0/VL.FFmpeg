@@ -41,33 +41,34 @@ internal abstract class DecodedVideoFrame : IDisposable
 
 internal sealed class CpuDecodedVideoFrame : DecodedVideoFrame
 {
-    private byte[]? _bgra;
+    private byte[]? _pixels;
+    private readonly bool _linear;
 
     public CpuDecodedVideoFrame(
-        byte[] bgra,
+        byte[] pixels,
         int width,
         int height,
         TimeSpan timecode,
         (int N, int D) frameRate,
-        string decodeStatus)
+        string decodeStatus,
+        bool linear)
         : base(width, height, timecode, frameRate, DecodePath.Software, decodeStatus)
     {
-        _bgra = bgra;
+        _pixels = pixels;
+        _linear = linear;
     }
 
     public override IResourceProvider<VideoFrame> CreateProvider()
     {
-        var pixels = Interlocked.Exchange(ref _bgra, null)
+        var pixels = Interlocked.Exchange(ref _pixels, null)
             ?? throw new InvalidOperationException("The decoded CPU frame was already consumed.");
-        return ResourceProvider.Return<VideoFrame>(new ManagedBgraVideoFrame(
-            pixels,
-            Width,
-            Height,
-            Timecode,
-            FrameRate));
+        VideoFrame frame = _linear
+            ? new ManagedRgba16fVideoFrame(pixels, Width, Height, Timecode, FrameRate, DecodeStatus)
+            : new ManagedBgraVideoFrame(pixels, Width, Height, Timecode, FrameRate, DecodeStatus);
+        return ResourceProvider.Return(frame);
     }
 
-    public override void Dispose() => _bgra = null;
+    public override void Dispose() => _pixels = null;
 }
 
 internal sealed class GpuDecodedVideoFrame : DecodedVideoFrame
@@ -96,11 +97,9 @@ internal sealed class GpuDecodedVideoFrame : DecodedVideoFrame
             ?? throw new InvalidOperationException("The decoded GPU frame was already consumed.");
         try
         {
-            VideoFrame frame = new GpuVideoFrame<BgraPixel>(
-                lease.Texture,
-                Metadata: DecodeStatus,
-                Timecode: Timecode,
-                FrameRate: FrameRate);
+            VideoFrame frame = lease.Texture.PixelFormat == VL.Lib.Basics.Imaging.PixelFormat.R16G16B16A16F
+                ? new GpuVideoFrame<Rgba16fPixel>(lease.Texture, DecodeStatus, Timecode, FrameRate)
+                : new GpuVideoFrame<BgraPixel>(lease.Texture, DecodeStatus, Timecode, FrameRate);
             return ResourceProvider.Return(
                 frame,
                 lease,

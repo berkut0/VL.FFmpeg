@@ -24,9 +24,10 @@ renderer-specific public code becomes necessary.
 - A frame buffer cannot be reused until all consumer handles are released.
 - Unsupported color, rotation or hardware paths must be reported explicitly.
 - D3D11VA uses only the D3D11 device from `VideoPlaybackContext` and returns
-  `GpuVideoFrame<BgraPixel>` through `IVideoSource2`. Keep software fallback
-  renderer-neutral. Do not add Stride/Skia dependencies or a private hardware
-  device without a new architecture review.
+  nonlinear `GpuVideoFrame<BgraPixel>` or linear
+  `GpuVideoFrame<Rgba16fPixel>` according to the consumer context. Keep
+  software fallback renderer-neutral. Do not add Stride/Skia dependencies or
+  a private hardware device without a new architecture review.
 
 ## NuGet layout
 

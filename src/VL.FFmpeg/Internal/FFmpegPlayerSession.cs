@@ -280,7 +280,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 {
                     _decodeStatus = fallbackReason is null
                         ? decoder.DecodeStatus
-                        : $"Software BGRA8 fallback; {fallbackReason}";
+                        : $"Software fallback; {fallbackReason}";
                     if (!decoder.HardwareConfigured)
                         _decodePath = DecodePath.Software;
                 }
@@ -296,7 +296,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                     request.Cancellation.ThrowIfCancellationRequested();
 
                     if (fallbackReason is not null)
-                        decodedFrame.DecodeStatus = $"Software BGRA8 fallback; {fallbackReason}";
+                        decodedFrame.DecodeStatus += $"; hardware fallback: {fallbackReason}";
                     var timeline = cycleOffset + decodedFrame.Timecode.TotalSeconds;
                     lastTimeline = Math.Max(lastTimeline, timeline);
                     lastMediaTime = decodedFrame.Timecode;
@@ -318,7 +318,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 lock (_syncRoot)
                 {
                     _decodePath = DecodePath.Software;
-                    _decodeStatus = $"Software BGRA8 fallback; {fallbackReason}";
+                    _decodeStatus = $"Software fallback; {fallbackReason}";
                 }
                 PublishWorkerState(
                     opening: false,

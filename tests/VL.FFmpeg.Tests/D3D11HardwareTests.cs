@@ -110,6 +110,96 @@ public sealed unsafe class D3D11HardwareTests
 
     [Test]
     [Platform("Win")]
+    public void D3D11VaSeekReleasesDiscardedPrerollFrames()
+    {
+        var filename = FindGammaReferenceClip();
+        if (filename is null)
+            Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
+
+        var createResult = CreateD3D11Device(out var device, out var immediateContext);
+        if (createResult < 0 || device == 0)
+            Assert.Ignore($"No hardware D3D11 device is available (HRESULT 0x{createResult:X8}).");
+
+        DecodedVideoFrame? decodedFrame = null;
+        try
+        {
+            using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            using var decoder = new FFmpegVideoDecoder(
+                filename,
+                TimeSpan.FromSeconds(0.5d),
+                cancellation.Token,
+                FindRepositoryRuntime(),
+                DecodeMode.Hardware,
+                graphicsDevice: device,
+                graphicsDeviceType: GraphicsDeviceType.Direct3D11);
+
+            decoder.Decode(frame =>
+            {
+                decodedFrame = frame;
+                return false;
+            });
+
+            Assert.That(decodedFrame, Is.Not.Null);
+            Assert.That(decodedFrame!.Timecode, Is.GreaterThanOrEqualTo(TimeSpan.FromSeconds(0.499d)));
+        }
+        finally
+        {
+            decodedFrame?.Dispose();
+            if (immediateContext != 0)
+                Marshal.Release(immediateContext);
+            if (device != 0)
+                Marshal.Release(device);
+        }
+    }
+
+    [Test]
+    [Platform("Win")]
+    public void LinearConsumerReceivesRgba16fGpuFrame()
+    {
+        var filename = FindGammaReferenceClip();
+        if (filename is null)
+            Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
+
+        var createResult = CreateD3D11Device(out var device, out var immediateContext);
+        if (createResult < 0 || device == 0)
+            Assert.Ignore($"No hardware D3D11 device is available (HRESULT 0x{createResult:X8}).");
+
+        DecodedVideoFrame? decodedFrame = null;
+        try
+        {
+            using var decoder = new FFmpegVideoDecoder(
+                filename,
+                TimeSpan.Zero,
+                CancellationToken.None,
+                FindRepositoryRuntime(),
+                DecodeMode.Hardware,
+                graphicsDevice: device,
+                graphicsDeviceType: GraphicsDeviceType.Direct3D11,
+                usesLinearColorspace: true);
+            decoder.Decode(frame =>
+            {
+                decodedFrame = frame;
+                return false;
+            });
+
+            using var handle = decodedFrame!.CreateProvider().GetHandle();
+            Assert.That(handle.Resource, Is.TypeOf<GpuVideoFrame<Rgba16fPixel>>());
+            Assert.That(handle.Resource.PixelFormat,
+                Is.EqualTo(VL.Lib.Basics.Imaging.PixelFormat.R16G16B16A16F));
+            Assert.That(decodedFrame.DecodeStatus, Does.Contain("linear GPU RGBA16F"));
+        }
+        finally
+        {
+            decodedFrame?.Dispose();
+            if (immediateContext != 0)
+                Marshal.Release(immediateContext);
+            if (device != 0)
+                Marshal.Release(device);
+        }
+    }
+
+    [Test]
+    [Platform("Win")]
     public void PlayerSessionDeliversGpuFrameThroughResourceProvider()
     {
         var filename = FindGammaReferenceClip();
@@ -203,6 +293,19 @@ public sealed unsafe class D3D11HardwareTests
         out nint device,
         out uint selectedFeatureLevel,
         out nint immediateContext);
+
+    private static int CreateD3D11Device(out nint device, out nint immediateContext)
+        => D3D11CreateDevice(
+            0,
+            driverType: 1,
+            software: 0,
+            flags: 0x20,
+            featureLevels: 0,
+            featureLevelCount: 0,
+            sdkVersion: 7,
+            out device,
+            out _,
+            out immediateContext);
 
     private static string? FindGammaReferenceClip()
     {
