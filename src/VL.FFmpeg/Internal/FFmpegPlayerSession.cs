@@ -30,6 +30,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         });
     private readonly Task _worker;
     private readonly List<CancellationTokenSource> _retiredRequestCancellations = [];
+    private readonly PlaybackTimeline _timeline = new();
 
     private PlaybackOptions _options;
     private DecodeRequest _decodeRequest;
@@ -40,11 +41,6 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     private DecodePath _decodePath;
     private string _decodeStatus = "Software BGRA8";
     private long _nextRequestGeneration;
-    private double _timelineSeconds;
-    private double _anchorTimelineSeconds;
-    private double _anchorClockSeconds;
-    private bool _clockNeedsReset = true;
-    private bool _lastPlay;
     private bool _opening;
     private bool _endOfStream;
     private bool _hasPresentedFrame;
@@ -62,8 +58,9 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         _options = source.Options;
         _requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             _lifetimeCancellation.Token);
-        _decodeRequest = CreateRequestLocked(_options, InitialPosition(_options));
-        _lastPlay = _options.Play;
+        var initialPosition = InitialPosition(_options);
+        _decodeRequest = CreateRequestLocked(_options, initialPosition);
+        _timeline.Reset(initialPosition.TotalSeconds);
         _worker = Task.Run(WorkerLoop);
         SignalWorker();
     }
@@ -79,8 +76,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 return null;
 
             var clockSeconds = _context.FrameClock.Time.Seconds;
-            ApplyClockStateLocked(clockSeconds);
-            var targetTimeline = CurrentTimelineLocked(clockSeconds);
+            var targetTimeline = _timeline.Update(clockSeconds, _options.Play);
             var drainedFrames = 0;
             DecodedVideoFrame? selectedFrame = null;
 
@@ -102,7 +98,6 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 drainedFrames++;
             }
 
-            _timelineSeconds = targetTimeline;
             if (selectedFrame is not null)
             {
                 _decodePath = selectedFrame.DecodePath;
@@ -389,37 +384,6 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         }
     }
 
-    private void ApplyClockStateLocked(double clockSeconds)
-    {
-        if (_clockNeedsReset)
-        {
-            _anchorClockSeconds = clockSeconds;
-            _anchorTimelineSeconds = _timelineSeconds;
-            _lastPlay = _options.Play;
-            _clockNeedsReset = false;
-            return;
-        }
-
-        if (_lastPlay == _options.Play)
-            return;
-
-        if (_lastPlay)
-            _timelineSeconds = CurrentTimelineLocked(clockSeconds);
-
-        _anchorClockSeconds = clockSeconds;
-        _anchorTimelineSeconds = _timelineSeconds;
-        _lastPlay = _options.Play;
-    }
-
-    private double CurrentTimelineLocked(double clockSeconds)
-    {
-        if (!_options.Play)
-            return _timelineSeconds;
-
-        var elapsed = Math.Max(0d, clockSeconds - _anchorClockSeconds);
-        return _anchorTimelineSeconds + elapsed;
-    }
-
     private PlaybackStatus BuildStatusLocked(bool playbackOverload)
     {
         if (_decodeFault is not null)
@@ -519,9 +483,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         _decodeStatus = options.DecodeMode == DecodeMode.Hardware
             ? "Waiting for required D3D11VA decode."
             : "Waiting for decoder selection.";
-        _timelineSeconds = initialPosition.TotalSeconds;
-        _anchorTimelineSeconds = _timelineSeconds;
-        _clockNeedsReset = true;
+        _timeline.Reset(initialPosition.TotalSeconds);
         _opening = false;
         _endOfStream = false;
         _hasPresentedFrame = false;
