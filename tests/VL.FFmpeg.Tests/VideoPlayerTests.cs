@@ -397,7 +397,7 @@ public sealed class VideoPlayerTests
 
     private sealed class TestSessionFactory : IFFmpegPlayerSessionFactory
     {
-        public IVideoPlayer Create(VideoPlayer source, VideoPlaybackContext context)
+        public IVideoPlayer Create(VideoPlayerSource source, VideoPlaybackContext context)
             => new TestVideoPlayer();
     }
 

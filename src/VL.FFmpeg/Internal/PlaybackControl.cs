@@ -59,6 +59,64 @@ internal sealed class PlaybackControl
     public void SetDecodeMode(DecodeMode decodeMode)
         => Change(decodeMode, static (options, value) => options with { DecodeMode = value });
 
+    public void Open(string? filename, bool play)
+    {
+        filename ??= string.Empty;
+        lock (_syncRoot)
+        {
+            var current = _options;
+            CommitLocked(current with
+            {
+                Filename = filename,
+                Play = play,
+                SeekTime = 0d,
+                SeekRequestId = current.SeekRequestId + 1
+            });
+        }
+    }
+
+    public void PlayFromStart()
+    {
+        lock (_syncRoot)
+        {
+            var current = _options;
+            CommitLocked(current with
+            {
+                Play = true,
+                SeekTime = 0d,
+                SeekRequestId = current.SeekRequestId + 1
+            });
+        }
+    }
+
+    public void Stop()
+    {
+        lock (_syncRoot)
+        {
+            var current = _options;
+            CommitLocked(current with
+            {
+                Play = false,
+                SeekTime = 0d,
+                SeekRequestId = current.SeekRequestId + 1
+            });
+        }
+    }
+
+    public void Close()
+    {
+        lock (_syncRoot)
+        {
+            var current = _options;
+            CommitLocked(current with
+            {
+                Filename = string.Empty,
+                Play = false,
+                SeekTime = 0d
+            });
+        }
+    }
+
     public void Seek(double positionSeconds)
     {
         positionSeconds = Math.Max(0d, positionSeconds);

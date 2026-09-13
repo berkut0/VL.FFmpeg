@@ -1,9 +1,7 @@
 using VL.Lib.Basics.Video;
-using VL.FFmpeg.Nodes;
-
 namespace VL.FFmpeg.Internal;
 
 internal interface IFFmpegPlayerSessionFactory
 {
-    IVideoPlayer Create(VideoPlayer source, VideoPlaybackContext context);
+    IVideoPlayer Create(VideoPlayerSource source, VideoPlaybackContext context);
 }

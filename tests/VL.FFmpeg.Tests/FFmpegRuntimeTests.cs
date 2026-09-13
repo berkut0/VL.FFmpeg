@@ -33,11 +33,13 @@ public sealed class FFmpegRuntimeTests
                 .ToArray();
             Assert.That(importedTypes, Is.EqualTo(new[]
             {
+                nameof(AdvancedVideoPlayer),
                 nameof(DecodeMode),
                 nameof(DecodePath),
                 nameof(PlaybackPhase),
                 nameof(RuntimeDiagnostics),
-                nameof(VideoPlayer)
+                nameof(VideoPlayer),
+                nameof(VideoPlayerControl)
             }));
         }
     }

@@ -13,7 +13,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     private const double PresentationEpsilon = 0.001;
 
     private readonly object _syncRoot = new();
-    private readonly VideoPlayer _source;
+    private readonly VideoPlayerSource _source;
     private readonly VideoPlaybackContext _context;
     private readonly nint _graphicsDevice;
     private readonly GraphicsDeviceType _graphicsDeviceType;
@@ -46,7 +46,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     private bool _hasPresentedFrame;
     private bool _disposed;
 
-    public FFmpegPlayerSession(VideoPlayer source, VideoPlaybackContext context)
+    public FFmpegPlayerSession(VideoPlayerSource source, VideoPlaybackContext context)
     {
         _source = source;
         _context = context;
@@ -558,6 +558,6 @@ internal sealed class FFmpegPlayerSessionFactory : IFFmpegPlayerSessionFactory
     {
     }
 
-    public IVideoPlayer Create(VideoPlayer source, VideoPlaybackContext context)
+    public IVideoPlayer Create(VideoPlayerSource source, VideoPlaybackContext context)
         => new FFmpegPlayerSession(source, context);
 }

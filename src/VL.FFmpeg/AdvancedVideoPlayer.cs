@@ -6,35 +6,39 @@ using VL.Model;
 namespace VL.FFmpeg.Nodes;
 
 /// <summary>
-/// FFmpeg video player for vvvv gamma.
+/// FFmpeg video player controlled through a reusable transport object.
 /// </summary>
 /// <remarks>
-/// Connect the output to VideoSourceToSKImage or VideoSourceToTexture.
+/// Connect Video Source to a standard video consumer and call operations on
+/// Control from any part of the patch.
 /// </remarks>
-[ProcessNode]
-public sealed class VideoPlayer : IVideoSource2, IDisposable
+[ProcessNode(Name = "VideoPlayer (Advanced Controls)")]
+public sealed class AdvancedVideoPlayer : IVideoSource2, IDisposable
 {
     private readonly VideoPlayerSource _source;
+    private readonly VideoPlayerControl _control;
 
     /// <summary>
-    /// Creates a Gamma video source. Native resources are created lazily by a
-    /// subscribed video consumer.
+    /// Creates a remotely controlled Gamma video source. Native resources are
+    /// created lazily by a subscribed video consumer.
     /// </summary>
-    public VideoPlayer()
+    public AdvancedVideoPlayer()
         : this(FFmpegPlayerSessionFactory.Instance)
     {
     }
 
-    internal VideoPlayer(IFFmpegPlayerSessionFactory sessionFactory)
+    internal AdvancedVideoPlayer(IFFmpegPlayerSessionFactory sessionFactory)
     {
         _source = new VideoPlayerSource(sessionFactory);
+        _control = new VideoPlayerControl(_source);
     }
 
     /// <summary>
-    /// Updates playback parameters and returns a renderer-neutral video source.
+    /// Returns the renderer-neutral source, transport control and current status.
     /// </summary>
     public void Update(
         out IVideoSource videoSource,
+        out VideoPlayerControl control,
         out double position,
         out double duration,
         out bool isPlaying,
@@ -43,15 +47,8 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
         out bool playbackOverload,
         out PlaybackPhase phase,
         out DecodePath decodePath,
-        [Pin(Visibility = PinVisibility.Optional)] out string status,
-        string filename = "",
-        bool play = true,
-        bool loop = false,
-        double seekTime = 0d,
-        bool seek = false,
-        [Pin(Visibility = PinVisibility.Optional)] DecodeMode decodeMode = DecodeMode.Auto)
+        [Pin(Visibility = PinVisibility.Optional)] out string status)
     {
-        _source.UpdateFromPins(filename, play, loop, seekTime, seek, decodeMode);
         _source.ReadOutputs(
             out position,
             out duration,
@@ -63,6 +60,7 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
             out decodePath,
             out status);
         videoSource = this;
+        control = _control;
     }
 
     IVideoPlayer? IVideoSource2.Start(VideoPlaybackContext context)
@@ -71,10 +69,7 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
     int IVideoSource2.ChangedTicket
         => ((IVideoSource2)_source).ChangedTicket;
 
-    internal PlaybackOptions Options => _source.Options;
-
-    internal void PublishStatus(IVideoPlayer session, PlaybackStatus status)
-        => _source.PublishStatus(session, status);
+    internal VideoPlayerSource Source => _source;
 
     void IDisposable.Dispose()
         => ((IDisposable)_source).Dispose();

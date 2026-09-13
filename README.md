@@ -11,6 +11,7 @@ Windows x64. Alpha.
 ## Features
 
 - Play, pause, seek, end-of-file and basic looping
+- Optional `VideoPlayer (Advanced)` node with a reusable transport-control object
 - Works with Skia and Stride through the standard video nodes
 - GPU decode when the renderer can take a texture, otherwise software
 - BT.601/BT.709/BT.2020 matrix and full/limited-range conversion
@@ -20,6 +21,10 @@ Windows x64. Alpha.
 `Decode Mode` defaults to `Auto`: GPU when the consumer asks for it, software
 otherwise. Explicit `Hardware` mode fails instead of falling back. HDR tone
 mapping and audio are not implemented.
+
+Use `VideoPlayer` for conventional pin-based transport. Use
+`VideoPlayer (Advanced)` when separate parts of a patch need to call `Open`,
+`Play`, `Pause`, `Stop`, `Close` or `Seek` on the same player.
 
 ## Build
 
