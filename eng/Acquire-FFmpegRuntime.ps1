@@ -4,88 +4,49 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$ProgressPreference = 'SilentlyContinue'
 
-$archiveName = 'ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip'
-$archiveUri = 'https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-12-13-15/' + $archiveName
-$expectedSha256 = '375df631ddf38bf38feb7bbd67259c454045b8ea75b96af62c33a440ba799f48'
-$requiredDlls = @(
-    'avcodec-62.dll',
-    'avformat-62.dll',
-    'avutil-60.dll',
-    'swresample-6.dll',
-    'swscale-9.dll'
-)
-
-$repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$runtimeDirectory = Join-Path $repositoryRoot 'runtimes\win-x64\native'
-$licenseDirectory = Join-Path $repositoryRoot 'LICENSES'
-$licenseTarget = Join-Path $licenseDirectory 'FFmpeg-LGPL-3.0.txt'
-
-$isComplete = (Test-Path -LiteralPath $licenseTarget)
-foreach ($dll in $requiredDlls) {
-    $isComplete = $isComplete -and (Test-Path -LiteralPath (Join-Path $runtimeDirectory $dll))
+# Vendored LGPL shared FFmpeg 8.1 binaries. Do not download BtbN autobuilds:
+# those release assets are deleted and CI 404s. Refreshing the runtime means
+# replacing these files and updating the hashes below.
+# The LGPL text is checked for presence only: Git on Windows may change its
+# line endings, so hashing that file is not stable.
+$requiredDlls = [ordered]@{
+    'runtimes\win-x64\native\avcodec-62.dll'   = 'c6033284027a2da01018503b8677176878d7caa4836de71fa695ddee59fac64f'
+    'runtimes\win-x64\native\avformat-62.dll'  = 'a584a9590110c5fd631fce7a86d715de95a5dc91ea866401f1a6358973ada397'
+    'runtimes\win-x64\native\avutil-60.dll'    = '4627a38fe77213af8cba4e2cee2e1376df48ca1872416e0889dd7b7dedbeadc2'
+    'runtimes\win-x64\native\swresample-6.dll' = '4f17df0f7c8913baab07ae40231f100b95dac59389e314d235c1f1f678008e46'
+    'runtimes\win-x64\native\swscale-9.dll'    = '32a459c634b234811c5781b0dbb0fcc143b58c000d893e20d7f65231659e89c2'
 }
 
-if ($isComplete -and -not $Force) {
-    Write-Host "Pinned FFmpeg runtime is already present in $runtimeDirectory"
+$repositoryRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$licensePath = Join-Path $repositoryRoot 'LICENSES\FFmpeg-LGPL-3.0.txt'
+$missing = New-Object System.Collections.Generic.List[string]
+
+foreach ($relativePath in $requiredDlls.Keys) {
+    $fullPath = Join-Path $repositoryRoot $relativePath
+    if (-not (Test-Path -LiteralPath $fullPath)) {
+        $missing.Add($relativePath)
+        continue
+    }
+
+    $actualSha256 = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedSha256 = $requiredDlls[$relativePath]
+    if ($actualSha256 -ne $expectedSha256) {
+        throw "FFmpeg runtime SHA-256 mismatch for $relativePath. Expected $expectedSha256, got $actualSha256."
+    }
+}
+
+if (-not (Test-Path -LiteralPath $licensePath)) {
+    $missing.Add('LICENSES\FFmpeg-LGPL-3.0.txt')
+}
+
+if ($missing.Count -gt 0) {
+    throw "Vendored FFmpeg runtime is missing: $($missing -join ', '). Restore the files from git; do not download BtbN autobuild archives."
+}
+
+if ($Force) {
+    Write-Host 'Vendored FFmpeg runtime hashes were rechecked.'
     return
 }
 
-$systemTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath())
-$temporaryDirectory = Join-Path $systemTemp ('VL.FFmpeg-' + [guid]::NewGuid().ToString('N'))
-$archivePath = Join-Path $temporaryDirectory $archiveName
-$extractDirectory = Join-Path $temporaryDirectory 'extract'
-
-try {
-    New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
-    New-Item -ItemType Directory -Path $extractDirectory | Out-Null
-
-    Write-Host "Downloading $archiveName"
-    Invoke-WebRequest -Uri $archiveUri -OutFile $archivePath -UseBasicParsing
-
-    $actualSha256 = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
-    if ($actualSha256 -ne $expectedSha256) {
-        throw "FFmpeg archive SHA-256 mismatch. Expected $expectedSha256, got $actualSha256."
-    }
-
-    Expand-Archive -LiteralPath $archivePath -DestinationPath $extractDirectory
-
-    $codecDll = Get-ChildItem -LiteralPath $extractDirectory -Recurse -File -Filter 'avcodec-62.dll' |
-        Select-Object -First 1
-    if ($null -eq $codecDll -or $codecDll.Directory.Name -ne 'bin') {
-        throw 'The verified archive does not contain the expected bin\avcodec-62.dll layout.'
-    }
-
-    $sourceBin = $codecDll.Directory.FullName
-    $sourceRoot = Split-Path -Parent $sourceBin
-    $sourceLicense = Join-Path $sourceRoot 'LICENSE.txt'
-    if (-not (Test-Path -LiteralPath $sourceLicense)) {
-        throw 'The verified archive does not contain LICENSE.txt.'
-    }
-
-    New-Item -ItemType Directory -Path $runtimeDirectory -Force | Out-Null
-    New-Item -ItemType Directory -Path $licenseDirectory -Force | Out-Null
-
-    foreach ($dll in $requiredDlls) {
-        $sourceDll = Join-Path $sourceBin $dll
-        if (-not (Test-Path -LiteralPath $sourceDll)) {
-            throw "The verified archive is missing $dll."
-        }
-        Copy-Item -LiteralPath $sourceDll -Destination (Join-Path $runtimeDirectory $dll) -Force
-    }
-
-    Copy-Item -LiteralPath $sourceLicense -Destination $licenseTarget -Force
-    Write-Host "Installed pinned LGPL FFmpeg runtime in $runtimeDirectory"
-}
-finally {
-    if (Test-Path -LiteralPath $temporaryDirectory) {
-        $resolvedTemporaryDirectory = [System.IO.Path]::GetFullPath($temporaryDirectory)
-        if (-not $resolvedTemporaryDirectory.StartsWith($systemTemp, [System.StringComparison]::OrdinalIgnoreCase) -or
-            -not ([System.IO.Path]::GetFileName($resolvedTemporaryDirectory)).StartsWith('VL.FFmpeg-', [System.StringComparison]::Ordinal)) {
-            throw "Refusing to remove unexpected temporary path: $resolvedTemporaryDirectory"
-        }
-        Remove-Item -LiteralPath $resolvedTemporaryDirectory -Recurse -Force
-    }
-}
-
+Write-Host "Vendored FFmpeg runtime is present under $(Join-Path $repositoryRoot 'runtimes\win-x64\native')"

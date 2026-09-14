@@ -1,8 +1,7 @@
-# Acquired FFmpeg runtime
+# FFmpeg runtime
 
-Run `eng/Acquire-FFmpegRuntime.ps1` to place the five pinned FFmpeg 8.1 shared
-DLLs here. Git ignores the binaries; `eng/Pack.ps1` requires them and the LGPL
-license text.
+The five LGPL shared FFmpeg 8.1 DLLs are committed here. GitHub Actions and
+`eng/Pack.ps1` use these files directly.
 
-The exact URL and SHA-256 are in the acquire script and
-`THIRD-PARTY-NOTICES.md`.
+`eng/Acquire-FFmpegRuntime.ps1` verifies their SHA-256. It does not download
+BtbN autobuilds. Provenance is in `THIRD-PARTY-NOTICES.md`.

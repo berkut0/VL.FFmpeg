@@ -20,7 +20,3 @@ packages/
 # Native intermediates
 *.obj
 *.pdb
-
-# Acquired FFmpeg runtime (packed, not committed)
-runtimes/win-x64/native/*.dll
-LICENSES/FFmpeg-LGPL-3.0.txt

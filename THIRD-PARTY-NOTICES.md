@@ -13,14 +13,15 @@ supplied by its NuGet package and upstream repository.
 
 ## FFmpeg
 
-The release package dynamically links to this BtbN shared build:
+The release package dynamically links to a BtbN LGPL shared FFmpeg 8.1 build.
+Those autobuild zip assets are deleted, so the five libraries and the archive
+license text are committed in this repository and verified by
+`eng/Acquire-FFmpegRuntime.ps1`.
 
-- archive: `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip`
-- release: `autobuild-2026-08-12-13-15`
-- archive SHA-256: `375df631ddf38bf38feb7bbd67259c454045b8ea75b96af62c33a440ba799f48`
+- original archive: `ffmpeg-n8.1.2-34-g9b6c8969e0-win64-lgpl-shared-8.1.zip`
+- original release: `autobuild-2026-08-12-13-15`
 - FFmpeg revision: `9b6c8969e0`
 - source: <https://github.com/FFmpeg/FFmpeg/commit/9b6c8969e0>
-- build: <https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-08-12-13-15>
 - configuration: LGPL shared, `--enable-version3`, without `--enable-gpl` or
   `--enable-nonfree`
 - libraries: `avcodec-62`, `avformat-62`, `avutil-60`, `swresample-6`,

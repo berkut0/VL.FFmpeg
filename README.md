@@ -7,7 +7,7 @@ to like.
 Connect Video Source to the usual Skia or Stride nodes. Connect Audio Source
 to `AudioSourceToAudioSignal` from VL.Audio and then to `AudioOut`.
 
-Windows x64. Alpha.
+Windows x64.
 
 ## Features
 
@@ -36,8 +36,9 @@ dotnet test tests\VL.FFmpeg.Tests\VL.FFmpeg.Tests.csproj -c Release
 powershell -NoProfile -ExecutionPolicy Bypass -File eng\Pack.ps1
 ```
 
-The acquire script downloads the pinned FFmpeg 8.1 shared libraries. They are
-gitignored and required by `Pack.ps1`.
+The five FFmpeg 8.1 shared libraries and their LGPL text are committed. The
+acquire script verifies their SHA-256; it does not download anything.
+`Pack.ps1` requires those files.
 
 `Pack.ps1` writes `VL.FFmpeg.dll` to `lib/net8.0` and packs
 [deployment/VL.FFmpeg.nuspec](deployment/VL.FFmpeg.nuspec) with `NuGet.exe`.

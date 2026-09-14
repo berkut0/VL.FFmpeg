@@ -1,0 +1,2 @@
+runtimes/win-x64/native/*.dll binary
+LICENSES/FFmpeg-LGPL-3.0.txt -text

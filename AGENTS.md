@@ -57,7 +57,9 @@ VL.FFmpeg/
   stale DLLs.
 - The package contains exactly one managed assembly, `VL.FFmpeg.dll`. Relocated
   AutoGen source is embedded under `VL.FFmpeg.Interop.AutoGen`. Native FFmpeg
-  DLLs stay under `runtimes/win-x64/native`.
+  DLLs stay under `runtimes/win-x64/native` and are committed with
+  `LICENSES/FFmpeg-LGPL-3.0.txt`. Do not gitignore them or download BtbN
+  autobuilds during CI; `eng/Acquire-FFmpegRuntime.ps1` only verifies hashes.
 - Do not use SDK-style `dotnet pack`, generated nuspec files or package-content
   MSBuild targets.
 - The nuspec does not depend on `VL.Core`. The C# project uses it only to
