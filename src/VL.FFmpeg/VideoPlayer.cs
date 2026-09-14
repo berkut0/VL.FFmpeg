@@ -1,5 +1,6 @@
 using VL.Core.Import;
 using VL.FFmpeg.Internal;
+using VL.Lib.Basics.Audio;
 using VL.Lib.Basics.Video;
 using VL.Model;
 
@@ -35,6 +36,7 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
     /// </summary>
     public void Update(
         out IVideoSource videoSource,
+        out IAudioSource audioSource,
         out double position,
         out double duration,
         out bool isPlaying,
@@ -63,6 +65,7 @@ public sealed class VideoPlayer : IVideoSource2, IDisposable
             out decodePath,
             out status);
         videoSource = this;
+        audioSource = _source;
     }
 
     IVideoPlayer? IVideoSource2.Start(VideoPlaybackContext context)

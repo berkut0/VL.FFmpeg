@@ -1,14 +1,18 @@
+using VL.Core;
+using VL.Lib.Basics.Audio;
+using VL.Lib.Basics.Resources;
 using VL.Lib.Basics.Video;
 
 namespace VL.FFmpeg.Internal;
 
-internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
+internal sealed class VideoPlayerSource : IVideoSource2, IAudioSource, IDisposable
 {
     private readonly object _syncRoot = new();
     private readonly IFFmpegPlayerSessionFactory _sessionFactory;
     private readonly PlaybackControl _control;
     private PlaybackStatus _status = PlaybackStatus.Idle;
     private IVideoPlayer? _currentSession;
+    private FFmpegAudioSession? _audioSession;
     private bool _wasEnded;
     private bool _disposed;
     private int _changedTicket;
@@ -22,6 +26,8 @@ internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
     internal PlaybackOptions Options => _control.Options;
 
     internal PlaybackStatus Status => Volatile.Read(ref _status);
+
+    internal Exception? AudioFault => _audioSession?.Fault;
 
     internal void UpdateFromPins(
         string? filename,
@@ -59,6 +65,8 @@ internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
         phase = snapshot.Phase;
         decodePath = snapshot.DecodePath;
         status = snapshot.Message;
+        if (AudioFault is { } audioFault)
+            status += $" Audio: {audioFault.Message}";
     }
 
     internal void Open(string? filename, bool play)
@@ -129,12 +137,47 @@ internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
 
     int IVideoSource2.ChangedTicket => Volatile.Read(ref _changedTicket);
 
+    IResourceProvider<AudioFrame>? IAudioSource.GrabAudioFrame(
+        int sampleCount,
+        Optional<int> sampleRate,
+        Optional<int> channelCount,
+        Optional<bool> interleaved)
+    {
+        FFmpegAudioSession session;
+        TimeSpan position;
+        lock (_syncRoot)
+        {
+            if (_disposed)
+                return null;
+            session = _audioSession ??= new FFmpegAudioSession(_control.Options);
+            position = TimeSpan.FromSeconds(Math.Max(0d, Status.Position));
+        }
+
+        var requestedSampleRate = sampleRate.HasValue && sampleRate.Value > 0
+            ? sampleRate.Value
+            : 48_000;
+        var requestedChannelCount = channelCount.HasValue
+            ? Math.Max(0, channelCount.Value)
+            : 0;
+        return session.Grab(
+            sampleCount,
+            requestedSampleRate,
+            requestedChannelCount,
+            interleaved.HasValue && interleaved.Value,
+            position);
+    }
+
     private void OptionsChanged(PlaybackOptions options)
     {
         IPlaybackOptionsSink? sink;
+        IPlaybackOptionsSink? audioSink;
         lock (_syncRoot)
+        {
             sink = _currentSession as IPlaybackOptionsSink;
+            audioSink = _audioSession;
+        }
         sink?.OptionsChanged(options);
+        audioSink?.OptionsChanged(options);
     }
 
     internal void PublishStatus(IVideoPlayer session, PlaybackStatus status)
@@ -168,6 +211,7 @@ internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
     void IDisposable.Dispose()
     {
         IVideoPlayer? session;
+        FFmpegAudioSession? audioSession;
         lock (_syncRoot)
         {
             if (_disposed)
@@ -176,6 +220,8 @@ internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
             _disposed = true;
             session = _currentSession;
             _currentSession = null;
+            audioSession = _audioSession;
+            _audioSession = null;
             Volatile.Write(ref _status, PlaybackStatus.Idle with
             {
                 Phase = Nodes.PlaybackPhase.Disposed,
@@ -188,6 +234,7 @@ internal sealed class VideoPlayerSource : IVideoSource2, IDisposable
         }
 
         session?.Dispose();
+        audioSession?.Dispose();
     }
 
     private void ThrowIfDisposed()

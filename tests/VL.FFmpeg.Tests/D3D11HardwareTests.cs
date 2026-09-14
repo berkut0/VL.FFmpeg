@@ -230,7 +230,7 @@ public sealed unsafe class D3D11HardwareTests
         {
             using var source = new VideoPlayer();
             source.Update(
-                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
                 filename: filename,
                 decodeMode: DecodeMode.Auto);
             var clock = new TestFrameClock { Time = 0.25d };
@@ -256,7 +256,7 @@ public sealed unsafe class D3D11HardwareTests
                 Assert.That(provider, Is.Not.Null);
                 handle = provider!.GetHandle();
                 source.Update(
-                    out _, out _, out _, out _, out _, out _, out _, out _, out path, out status,
+                    out _, out _, out _, out _, out _, out _, out _, out _, out _, out path, out status,
                     filename: filename,
                     decodeMode: DecodeMode.Auto);
             }

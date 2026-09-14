@@ -22,6 +22,7 @@ public sealed class VideoPlayerTests
         {
             Assert.That(update.ReturnType, Is.EqualTo(typeof(void)));
             Assert.That(parameters, Does.Contain("videoSource"));
+            Assert.That(parameters, Does.Contain("audioSource"));
             Assert.That(parameters, Does.Contain("filename"));
             Assert.That(parameters, Does.Contain("play"));
             Assert.That(parameters, Does.Contain("loop"));
@@ -130,6 +131,77 @@ public sealed class VideoPlayerTests
     }
 
     [Test]
+    public void AudioSourceReturnsRequestedPlanarFramesWithoutVideoConsumer()
+    {
+        var filename = FindGammaAudioReferenceClip();
+        if (filename is null)
+            Assert.Ignore("The Gamma VL.Audio reference clip is not installed on this machine.");
+
+        var runtimePath = FindRepositoryRuntime();
+        var previousRuntimePath = Environment.GetEnvironmentVariable("VL_FFMPEG_NATIVE_PATH");
+        if (runtimePath is not null)
+            Environment.SetEnvironmentVariable("VL_FFMPEG_NATIVE_PATH", runtimePath);
+        try
+        {
+            using var source = new VideoPlayer();
+            source.Update(
+                out _,
+                out var audioSource,
+                out _, out _, out _, out _, out _, out _, out _, out _, out _,
+                filename: filename,
+                play: true);
+
+            IResourceProvider<VL.Lib.Basics.Audio.AudioFrame>? provider = null;
+            for (var attempt = 0; attempt < 200 && provider is null; attempt++)
+            {
+                provider = audioSource.GrabAudioFrame(512, 48_000, 2, false);
+                if (provider is null)
+                    Thread.Sleep(5);
+            }
+
+            Assert.That(provider, Is.Not.Null, ((VideoPlayerSource)audioSource).AudioFault?.ToString());
+            using var handle = provider!.GetHandle();
+            var frame = handle.Resource;
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(frame.SampleRate, Is.EqualTo(48_000));
+                Assert.That(frame.ChannelCount, Is.EqualTo(2));
+                Assert.That(frame.SampleCount, Is.EqualTo(512));
+                Assert.That(frame.IsPlanar, Is.True);
+                Assert.That(frame.GetChannel(0).ToArray().Any(sample => sample != 0f), Is.True);
+            }
+
+            source.Update(
+                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
+                filename: filename,
+                play: false);
+            Assert.That(audioSource.GrabAudioFrame(512, 48_000, 2, false), Is.Null);
+
+            source.Update(
+                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
+                filename: filename,
+                play: true,
+                seekTime: 0.5d,
+                seek: true);
+            IResourceProvider<VL.Lib.Basics.Audio.AudioFrame>? seekProvider = null;
+            for (var attempt = 0; attempt < 200 && seekProvider is null; attempt++)
+            {
+                seekProvider = audioSource.GrabAudioFrame(512, 48_000, 2, false);
+                if (seekProvider is null)
+                    Thread.Sleep(5);
+            }
+            Assert.That(seekProvider, Is.Not.Null, ((VideoPlayerSource)audioSource).AudioFault?.ToString());
+            using var seekHandle = seekProvider!.GetHandle();
+            Assert.That(seekHandle.Resource.Timecode,
+                Is.GreaterThanOrEqualTo(TimeSpan.FromSeconds(0.5d)));
+        }
+        finally
+        {
+            Environment.SetEnvironmentVariable("VL_FFMPEG_NATIVE_PATH", previousRuntimePath);
+        }
+    }
+
+    [Test]
     public void HardwareModeWithoutGpuContextPublishesFault()
     {
         var filename = FindGammaReferenceClip();
@@ -145,7 +217,7 @@ public sealed class VideoPlayerTests
         {
             using var source = new VideoPlayer();
             source.Update(
-                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
+                out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _,
                 filename: filename,
                 decodeMode: DecodeMode.Hardware);
             using var session = ((IVideoSource2)source).Start(CreateContext());
@@ -155,7 +227,7 @@ public sealed class VideoPlayerTests
             for (var attempt = 0; attempt < 100 && phase != PlaybackPhase.Faulted; attempt++)
             {
                 source.Update(
-                    out _, out _, out _, out _, out _, out _, out _, out phase, out _, out status,
+                    out _, out _, out _, out _, out _, out _, out _, out _, out phase, out _, out status,
                     filename: filename,
                     decodeMode: DecodeMode.Hardware);
                 if (phase != PlaybackPhase.Faulted)
@@ -298,6 +370,7 @@ public sealed class VideoPlayerTests
             out _,
             out _,
             out _,
+            out _,
             seek: seek,
             decodeMode: decodeMode);
     }
@@ -305,6 +378,7 @@ public sealed class VideoPlayerTests
     private static bool UpdateAndGetOnEnd(VideoPlayer source)
     {
         source.Update(
+            out _,
             out _,
             out _,
             out _,
@@ -332,6 +406,7 @@ public sealed class VideoPlayerTests
     {
         source.Update(
             out _,
+            out _,
             out position,
             out duration,
             out _,
@@ -355,6 +430,18 @@ public sealed class VideoPlayerTests
             .EnumerateDirectories(vvvvRoot, "vvvv_gamma_*", SearchOption.TopDirectoryOnly)
             .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
             .Select(path => Path.Combine(path, "packs", "VL.Video", "help", "Birds_H264.mp4"))
+            .FirstOrDefault(File.Exists);
+    }
+
+    private static string? FindGammaAudioReferenceClip()
+    {
+        const string vvvvRoot = @"C:\Program Files\vvvv";
+        if (!Directory.Exists(vvvvRoot))
+            return null;
+        return Directory
+            .EnumerateDirectories(vvvvRoot, "vvvv_gamma_*", SearchOption.TopDirectoryOnly)
+            .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+            .Select(path => Path.Combine(path, "packs", "VL.Audio", "help", "vvvv.mp3"))
             .FirstOrDefault(File.Exists);
     }
 

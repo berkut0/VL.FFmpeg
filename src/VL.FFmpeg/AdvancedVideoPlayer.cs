@@ -1,5 +1,6 @@
 using VL.Core.Import;
 using VL.FFmpeg.Internal;
+using VL.Lib.Basics.Audio;
 using VL.Lib.Basics.Video;
 using VL.Model;
 
@@ -12,7 +13,7 @@ namespace VL.FFmpeg.Nodes;
 /// Connect Video Source to a standard video consumer and call operations on
 /// Control from any part of the patch.
 /// </remarks>
-[ProcessNode(Name = "VideoPlayer (Advanced Controls)")]
+[ProcessNode(Name = "VideoPlayer (Advanced)")]
 public sealed class AdvancedVideoPlayer : IVideoSource2, IDisposable
 {
     private readonly VideoPlayerSource _source;
@@ -38,6 +39,7 @@ public sealed class AdvancedVideoPlayer : IVideoSource2, IDisposable
     /// </summary>
     public void Update(
         out IVideoSource videoSource,
+        out IAudioSource audioSource,
         out VideoPlayerControl control,
         out double position,
         out double duration,
@@ -60,6 +62,7 @@ public sealed class AdvancedVideoPlayer : IVideoSource2, IDisposable
             out decodePath,
             out status);
         videoSource = this;
+        audioSource = _source;
         control = _control;
     }
 

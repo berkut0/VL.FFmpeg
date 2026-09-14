@@ -4,7 +4,8 @@ A video player node for vvvv gamma. FFmpeg does the decoding, so you can play
 the files you actually have — not only the formats a built-in player happens
 to like.
 
-Connect it to the usual Skia or Stride video nodes.
+Connect Video Source to the usual Skia or Stride nodes. Connect Audio Source
+to `AudioSourceToAudioSignal` from VL.Audio and then to `AudioOut`.
 
 Windows x64. Alpha.
 
@@ -13,6 +14,7 @@ Windows x64. Alpha.
 - Play, pause, seek, end-of-file and basic looping
 - Optional `VideoPlayer (Advanced)` node with a reusable transport-control object
 - Works with Skia and Stride through the standard video nodes
+- Decodes audio through the standard VL.Audio `IAudioSource` consumer
 - GPU decode when the renderer can take a texture, otherwise software
 - BT.601/BT.709/BT.2020 matrix and full/limited-range conversion
 - Nonlinear BGRA8 or linear RGBA16F output according to the consumer
@@ -20,7 +22,7 @@ Windows x64. Alpha.
 
 `Decode Mode` defaults to `Auto`: GPU when the consumer asks for it, software
 otherwise. Explicit `Hardware` mode fails instead of falling back. HDR tone
-mapping and audio are not implemented.
+mapping is not implemented.
 
 Use `VideoPlayer` for conventional pin-based transport. Use
 `VideoPlayer (Advanced)` when separate parts of a patch need to call `Open`,

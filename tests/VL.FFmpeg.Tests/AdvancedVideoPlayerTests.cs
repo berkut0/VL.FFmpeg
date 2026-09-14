@@ -22,6 +22,8 @@ public sealed class AdvancedVideoPlayerTests
             Assert.That(parameters, Has.Some.Matches<System.Reflection.ParameterInfo>(
                 parameter => parameter.Name == "videoSource"));
             Assert.That(parameters, Has.Some.Matches<System.Reflection.ParameterInfo>(
+                parameter => parameter.Name == "audioSource"));
+            Assert.That(parameters, Has.Some.Matches<System.Reflection.ParameterInfo>(
                 parameter => parameter.Name == "control"));
             Assert.That(parameters.All(parameter => parameter.IsOut), Is.True);
         }
@@ -116,6 +118,7 @@ public sealed class AdvancedVideoPlayerTests
     private static VideoPlayerControl GetControl(AdvancedVideoPlayer player)
     {
         player.Update(
+            out _,
             out _,
             out var control,
             out _,

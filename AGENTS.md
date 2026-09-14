@@ -9,8 +9,9 @@ renderer-specific public code becomes necessary.
 ## Architecture
 
 - Decode/timeline code must not depend on Skia or Stride.
-- Gamma integration is `IVideoSource2`, `IVideoPlayer`, `VideoPlaybackContext`
-  and `IResourceProvider<VideoFrame>`.
+- Gamma integration uses `IVideoSource2`, `IVideoPlayer`,
+  `VideoPlaybackContext`, `IAudioSource` and resource-provided video/audio
+  frames.
 - The process-node assembly uses one `ImportAsIs` for `VL.FFmpeg.Nodes`.
   Do not replace it with per-type `ImportType` attributes without a Gamma
   PackageCompiler regression test.
@@ -19,6 +20,7 @@ renderer-specific public code becomes necessary.
   needed to distinguish sibling nodes; name specialized variants as
   `Name (Variant)`.
 - Workers must have bounded queues, cancellation and deterministic shutdown.
+- `IAudioSource.GrabAudioFrame` must never block on decode or native I/O.
 - Native FFmpeg libraries load from verified absolute paths. Never use
   process-global `SetDllDirectory`.
 - A frame buffer cannot be reused until all consumer handles are released.
