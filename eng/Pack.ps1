@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string] $NuGetExe = "",
-    [string] $OutputDirectory = "artifacts\packages"
+    [string] $OutputDirectory = "artifacts\packages",
+    [string] $Version = ""
 )
 
 $ErrorActionPreference = 'Stop'
@@ -81,13 +82,21 @@ try {
     }
 
     New-Item -ItemType Directory -Path $outputPath -Force | Out-Null
-    & $NuGetExe pack $nuspecPath -OutputDirectory $outputPath -NonInteractive
+    $packArguments = @($nuspecPath, '-OutputDirectory', $outputPath, '-NonInteractive')
+    if (-not [string]::IsNullOrWhiteSpace($Version)) {
+        $packArguments += @('-Version', $Version)
+    }
+    & $NuGetExe pack @packArguments
     if ($LASTEXITCODE -ne 0) {
         throw "nuget pack failed with exit code $LASTEXITCODE."
     }
 
     [xml] $nuspec = Get-Content -LiteralPath $nuspecPath -Raw -Encoding utf8
-    $version = [string] $nuspec.package.metadata.version
+    $version = if ([string]::IsNullOrWhiteSpace($Version)) {
+        [string] $nuspec.package.metadata.version
+    } else {
+        $Version
+    }
     $packagePath = Join-Path $outputPath "VL.FFmpeg.$version.nupkg"
     if (-not (Test-Path -LiteralPath $packagePath)) {
         throw "Expected package was not created: $packagePath"

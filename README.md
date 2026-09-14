@@ -43,6 +43,12 @@ gitignored and required by `Pack.ps1`.
 [deployment/VL.FFmpeg.nuspec](deployment/VL.FFmpeg.nuspec) with `NuGet.exe`.
 It does not compile the `.vl` document; validate the package in Gamma.
 
+## Publish
+
+[`.github/workflows/push_nuget.yml`](.github/workflows/push_nuget.yml)
+publishes to nuget.org as `antokhio`. Trigger it with a `v*` tag or a manual
+workflow run. NuGet.org must trust this GitHub repository for that account.
+
 ## Layout
 
 ```text
