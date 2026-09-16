@@ -12,7 +12,7 @@ Windows x64.
 ## Features
 
 - Play, pause, seek, end-of-file and basic looping
-- Optional `VideoPlayer (Advanced)` node with a reusable transport-control object
+- Optional `VideoPlayer (Advanced Controls)` node with a reusable transport-control object
 - Works with Skia and Stride through the standard video nodes
 - Decodes audio through the standard VL.Audio `IAudioSource` consumer
 - GPU decode when the renderer can take a texture, otherwise software
@@ -25,7 +25,7 @@ otherwise. Explicit `Hardware` mode fails instead of falling back. HDR tone
 mapping is not implemented.
 
 Use `VideoPlayer` for conventional pin-based transport. Use
-`VideoPlayer (Advanced)` when separate parts of a patch need to call `Open`,
+`VideoPlayer (Advanced Controls)` when separate parts of a patch need to call `Open`,
 `Play`, `Pause`, `Stop`, `Close` or `Seek` on the same player.
 
 ## Build

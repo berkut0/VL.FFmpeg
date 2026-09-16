@@ -8,6 +8,33 @@ namespace VL.FFmpeg.Tests;
 public sealed class FFmpegRuntimeTests
 {
     [Test]
+    public void BothPlayersArePublicProcessNodesInTheImportedNamespace()
+    {
+        var players = new[] { typeof(VideoPlayer), typeof(AdvancedVideoPlayer) };
+        foreach (var player in players)
+        {
+            using (Assert.EnterMultipleScope())
+            {
+                Assert.That(player.IsPublic, Is.True, player.FullName);
+                Assert.That(player.Namespace, Is.EqualTo("VL.FFmpeg.Nodes"), player.FullName);
+                Assert.That(player.GetConstructor(Type.EmptyTypes), Is.Not.Null, player.FullName);
+                Assert.That(player.GetMethod("Update"), Is.Not.Null, player.FullName);
+                Assert.That(
+                    player.GetCustomAttributesData().Count(attribute =>
+                        attribute.AttributeType.FullName == "VL.Core.Import.ProcessNodeAttribute"),
+                    Is.EqualTo(1),
+                    player.FullName);
+            }
+        }
+
+        var advancedAttribute = typeof(AdvancedVideoPlayer).GetCustomAttributesData().Single(
+            attribute => attribute.AttributeType.FullName == "VL.Core.Import.ProcessNodeAttribute");
+        var advancedName = advancedAttribute.NamedArguments.Single(
+            argument => argument.MemberName == "Name").TypedValue.Value;
+        Assert.That(advancedName, Is.EqualTo("VideoPlayer (Advanced Controls)"));
+    }
+
+    [Test]
     public void ProcessNodeAssemblyUsesImportAsIs()
     {
         var attributes = typeof(VideoPlayer).Assembly.GetCustomAttributesData();

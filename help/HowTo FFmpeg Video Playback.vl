@@ -26,6 +26,7 @@
             <Pin Id="T5U1AwvNqfdL0m7yGUxOKK" Name="Seek Time" Kind="InputPin" />
             <Pin Id="U3NrIjU3ZmBMFhmMTzMtZK" Name="Seek" Kind="InputPin" />
             <Pin Id="Es9Vu1WDkEULqiOSmHuNDX" Name="Video Source" Kind="OutputPin" />
+            <Pin Id="LgtvkujrsxoOfdlSRmUTSM" Name="Audio Source" Kind="OutputPin" />
             <Pin Id="QGT8afGHZM4Ov6IOglORJl" Name="Position" Kind="OutputPin" />
             <Pin Id="GDxZOqx2JIZMHfVVEJ5WuW" Name="Duration" Kind="OutputPin" />
             <Pin Id="QgrclPyEDUBLvZQYmHFAzX" Name="Is Playing" Kind="OutputPin" />
@@ -80,6 +81,7 @@
               <Choice Kind="ProcessAppFlag" Name="VideoPlayer (Controls)" />
             </p:NodeReference>
             <Pin Id="Bet2zNNzrJdOj9ZcfXgGrp" Name="Video Source" Kind="OutputPin" />
+            <Pin Id="Qt0bRiS8QJeMaq5cMIjzSf" Name="Audio Source" Kind="OutputPin" />
             <Pin Id="U3a1nvPyDjHMjJfB9WYzmU" Name="Control" Kind="OutputPin" />
             <Pin Id="AyJ2OyotO8wLgRbl9bVzfn" Name="Position" Kind="OutputPin" />
             <Pin Id="C00ewGFDS35MbTVGrHcY9v" Name="Duration" Kind="OutputPin" />

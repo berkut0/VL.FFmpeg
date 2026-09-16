@@ -3,13 +3,13 @@
 ## Public flow
 
 ```text
-VideoPlayer | VideoPlayer (Advanced)
+VideoPlayer | VideoPlayer (Advanced Controls)
   -> IVideoSource2
   -> IVideoPlayer
   -> IResourceProvider<VideoFrame>
   -> VideoSourceToSKImage | VideoSourceToTexture
 
-VideoPlayer | VideoPlayer (Advanced)
+VideoPlayer | VideoPlayer (Advanced Controls)
   -> IAudioSource
   -> AudioSourceToAudioSignal
   -> AudioOut
@@ -30,7 +30,7 @@ There is no Skia- or Stride-specific public API. Both renderers consume
 - `PlaybackControl` serializes option changes before notifying the active session.
 - `VideoPlayerSource` is the shared `IVideoSource2` and `IAudioSource` boundary.
 - `VideoPlayer` maps conventional pins to transport options.
-- `VideoPlayer (Advanced)` exposes a reusable `VideoPlayerControl` object instead
+- `VideoPlayer (Advanced Controls)` exposes a reusable `VideoPlayerControl` object instead
   of transport inputs. Its operations can be called from separate patch locations.
 - `D3D11TexturePool` converts NV12/P010 decoder surfaces into leased nonlinear
   BGRA8 or linear RGBA16F textures on the consumer device.

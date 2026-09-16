@@ -17,7 +17,7 @@ public sealed class AdvancedVideoPlayerTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(displayName, Is.EqualTo("VideoPlayer (Advanced)"));
+            Assert.That(displayName, Is.EqualTo("VideoPlayer (Advanced Controls)"));
             Assert.That(parameters, Is.Not.Empty);
             Assert.That(parameters, Has.Some.Matches<System.Reflection.ParameterInfo>(
                 parameter => parameter.Name == "videoSource"));

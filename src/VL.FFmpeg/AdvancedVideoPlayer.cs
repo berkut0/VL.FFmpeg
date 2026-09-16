@@ -13,7 +13,7 @@ namespace VL.FFmpeg.Nodes;
 /// Connect Video Source to a standard video consumer and call operations on
 /// Control from any part of the patch.
 /// </remarks>
-[ProcessNode(Name = "VideoPlayer (Advanced)")]
+[ProcessNode(Name = "VideoPlayer (Advanced Controls)")]
 public sealed class AdvancedVideoPlayer : IVideoSource2, IDisposable
 {
     private readonly VideoPlayerSource _source;
