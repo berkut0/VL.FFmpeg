@@ -15,7 +15,7 @@
       </p:NodeReference>
       <Patch Id="TJDsXFmSGJYPZmB2Ko0yY6">
         <Canvas Id="UxtiQ6xsWWoPP1EFCwaYGf" CanvasType="Group">
-          <Node Bounds="151,250,165,19" Id="HM59cFXRWROOQRYrC5BBUd">
+          <Node Bounds="151,250,185,19" Id="HM59cFXRWROOQRYrC5BBUd">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <Choice Kind="ProcessAppFlag" Name="VideoPlayer" />
@@ -38,7 +38,7 @@
             <Pin Id="T6TOOyuJWM0PpubjSODqU8" Name="Decode Mode" Kind="InputPin" IsHidden="true" />
             <Pin Id="N6oMDxMk02hQAdhIBGMcUG" Name="Status" Kind="OutputPin" IsHidden="true" />
           </Node>
-          <Pad Id="CqURsvm67ZlPiMpBuqNlZG" Comment="Decode Path" Bounds="313,299,127,15" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="CqURsvm67ZlPiMpBuqNlZG" Comment="Decode Path" Bounds="333,300,127,15" ShowValueBox="true" isIOBox="true" />
           <Node Bounds="151,180,55,19" Id="K9b8Eg0JcQAO7CCb2uKrIc">
             <p:NodeReference LastCategoryFullName="System.Conversion" LastDependency="VL.CoreLib.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
@@ -47,7 +47,7 @@
             <Pin Id="KTaYtv9z548PO5Ob7aGduP" Name="Input" Kind="InputPin" />
             <Pin Id="GXm3nHd62pkMbIFRz78BR7" Name="Result" Kind="OutputPin" />
           </Node>
-          <Pad Id="JuHWSyFpyyfLxhs7E2ynPA" Comment="" Bounds="153,160,218,15" ShowValueBox="true" isIOBox="true" Value="D:\video\A.I.Rising.BDRemux.1080p.pk.mkv">
+          <Pad Id="JuHWSyFpyyfLxhs7E2ynPA" Comment="" Bounds="153,160,199,15" ShowValueBox="true" isIOBox="true" Value="..\..\..\..\video\A.I.Rising.BDRemux.1080p.pk.mkv">
             <p:TypeAnnotation LastCategoryFullName="IO" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Path" />
             </p:TypeAnnotation>
@@ -65,7 +65,7 @@
             <Pin Id="R9Lcti8G41HLfDljtSanYS" Name="Output" Kind="OutputPin" />
           </Node>
           <Pad Id="IwLQAohxQzgL9eIt2hQYk6" Comment="" Bounds="153,370,190,132" ShowValueBox="true" isIOBox="true" />
-          <Pad Id="L6asVD6nbbEO9KuJf3qpoN" Comment="Seek" Bounds="313,209,35,35" ShowValueBox="true" isIOBox="true" Value="false">
+          <Pad Id="L6asVD6nbbEO9KuJf3qpoN" Comment="Seek" Bounds="333,210,35,35" ShowValueBox="true" isIOBox="true" Value="false">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
             </p:TypeAnnotation>
@@ -73,9 +73,9 @@
               <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
             </p:ValueBoxSettings>
           </Pad>
-          <Pad Id="Twuf0EIhP8MMB9Fl7Dl61R" Comment="Position" Bounds="173,310,35,15" ShowValueBox="true" isIOBox="true" />
-          <Pad Id="QrU52BTYEgsOfnKTRlQVLU" Comment="Duration" Bounds="193,289,47,15" ShowValueBox="true" isIOBox="true" />
-          <Node Bounds="530,149,185,19" Id="VfcuimJ9meEOGfBN77egIC">
+          <Pad Id="Twuf0EIhP8MMB9Fl7Dl61R" Comment="Position" Bounds="193,310,35,15" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="QrU52BTYEgsOfnKTRlQVLU" Comment="Duration" Bounds="213,290,47,15" ShowValueBox="true" isIOBox="true" />
+          <Node Bounds="547,150,205,19" Id="VfcuimJ9meEOGfBN77egIC">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <Choice Kind="ProcessAppFlag" Name="VideoPlayer (Controls)" />
@@ -93,7 +93,7 @@
             <Pin Id="LRvBi4Bfb0zLPA2yFzZkUQ" Name="Decode Path" Kind="OutputPin" />
             <Pin Id="HWkJDnURs73M94L93KhrCe" Name="Status" Kind="OutputPin" IsHidden="true" />
           </Node>
-          <Node Bounds="530,620,119,19" Id="Bv1ONiSNy5AM1AFPtCuzom">
+          <Node Bounds="547,621,119,19" Id="Bv1ONiSNy5AM1AFPtCuzom">
             <p:NodeReference LastCategoryFullName="Stride.Video" LastDependency="VL.Stride.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <Choice Kind="ProcessAppFlag" Name="VideoSourceToTexture" />
@@ -105,8 +105,8 @@
             <Pin Id="OC8CrrhnX8rNXjTBPQHGQO" Name="Prefer Gpu" Kind="InputPin" />
             <Pin Id="BT8ru4GNUlGOhGCrMWekx5" Name="Output" Kind="OutputPin" />
           </Node>
-          <Pad Id="M6p7mp4WF8CLsqpcAjFRVY" Comment="" Bounds="532,661,190,132" ShowValueBox="true" isIOBox="true" />
-          <Node Bounds="550,240,84,26" Id="TRP2UCWTQziMlEfTEZtvPa">
+          <Pad Id="M6p7mp4WF8CLsqpcAjFRVY" Comment="" Bounds="549,662,190,132" ShowValueBox="true" isIOBox="true" />
+          <Node Bounds="587,241,84,26" Id="TRP2UCWTQziMlEfTEZtvPa">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -118,7 +118,7 @@
             <Pin Id="P5mOdhi5xMnOfOFUr5pJk7" Name="Output" Kind="StateOutputPin" />
             <Pin Id="FPWAIsZTfiZLgpKgvK31M8" Name="Apply" Kind="InputPin" DefaultValue="False" />
           </Node>
-          <Pad Id="OFcO40b6L4rNIYe9VOPkT6" Comment="Apply" Bounds="631,201,35,15" ShowValueBox="true" isIOBox="true" Value="false">
+          <Pad Id="OFcO40b6L4rNIYe9VOPkT6" Comment="Apply" Bounds="668,202,35,15" ShowValueBox="true" isIOBox="true" Value="false">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
             </p:TypeAnnotation>
@@ -126,7 +126,7 @@
               <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
             </p:ValueBoxSettings>
           </Pad>
-          <Node Bounds="576,119,55,19" Id="OvRF2CvlS7tMTmwm5Z0Php">
+          <Node Bounds="613,121,55,19" Id="OvRF2CvlS7tMTmwm5Z0Php">
             <p:NodeReference LastCategoryFullName="System.Conversion" LastDependency="VL.CoreLib.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <Choice Kind="OperationCallFlag" Name="ToString" />
@@ -134,12 +134,12 @@
             <Pin Id="Bc0FeYHcr1zM0LcsZt21ey" Name="Input" Kind="InputPin" />
             <Pin Id="CgKEUK7a1LvOERVlAE54I6" Name="Result" Kind="OutputPin" />
           </Node>
-          <Pad Id="KBHaJnGu8MlLZDxtFquyPj" Comment="" Bounds="578,99,218,15" ShowValueBox="true" isIOBox="true" Value="..\..\..\..\video\A.I.Rising.BDRemux.1080p.pk.mkv">
+          <Pad Id="KBHaJnGu8MlLZDxtFquyPj" Comment="" Bounds="615,101,188,15" ShowValueBox="true" isIOBox="true" Value="..\..\..\..\video\A.I.Rising.BDRemux.1080p.pk.mkv">
             <p:TypeAnnotation LastCategoryFullName="IO" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Path" />
             </p:TypeAnnotation>
           </Pad>
-          <Node Bounds="550,281,84,26" Id="MQNgneLIY7yOAToZ4Y76T9">
+          <Node Bounds="587,282,84,26" Id="MQNgneLIY7yOAToZ4Y76T9">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -149,8 +149,8 @@
             <Pin Id="PEJjLw03PucMOl3XMepHQD" Name="Output" Kind="StateOutputPin" />
             <Pin Id="KqJgREefvkvNJnhrtS2kn2" Name="Position" Kind="OutputPin" />
           </Node>
-          <Pad Id="KoKj3FKAO01LJ1eOGNfllq" Comment="Position" Bounds="631,320,44,15" ShowValueBox="true" isIOBox="true" />
-          <Node Bounds="550,370,84,26" Id="MTZlGoNYTo0OSxvpooaKbC">
+          <Pad Id="KoKj3FKAO01LJ1eOGNfllq" Comment="Position" Bounds="668,321,44,15" ShowValueBox="true" isIOBox="true" />
+          <Node Bounds="587,371,84,26" Id="MTZlGoNYTo0OSxvpooaKbC">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -160,7 +160,7 @@
             <Pin Id="LPHHiiGxVaRNzH3VzUiUEP" Name="Output" Kind="StateOutputPin" />
             <Pin Id="UbZS5qcBpYWMjql3ZcQetS" Name="Apply" Kind="InputPin" />
           </Node>
-          <Pad Id="AQPcgLpxdApNlGkPCad3Lo" Comment="Apply" Bounds="631,360,35,15" ShowValueBox="true" isIOBox="true" Value="false">
+          <Pad Id="AQPcgLpxdApNlGkPCad3Lo" Comment="Apply" Bounds="668,361,35,15" ShowValueBox="true" isIOBox="true" Value="false">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
             </p:TypeAnnotation>
@@ -168,7 +168,7 @@
               <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
             </p:ValueBoxSettings>
           </Pad>
-          <Node Bounds="723,370,84,26" Id="JOyjf9rsDRvNFusfruPZcd">
+          <Node Bounds="760,371,84,26" Id="JOyjf9rsDRvNFusfruPZcd">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -179,7 +179,7 @@
             <Pin Id="NuuoKzAv0wxPzfdpBwQ7b1" Name="Output" Kind="StateOutputPin" />
             <Pin Id="Q0zMVWD57B6Oe8NZgQ7UH2" Name="Apply" Kind="InputPin" DefaultValue="False" />
           </Node>
-          <Pad Id="UZThVNgvpQgPsxoZ8ca1rR" Comment="Apply" Bounds="804,360,35,15" ShowValueBox="true" isIOBox="true" Value="false">
+          <Pad Id="UZThVNgvpQgPsxoZ8ca1rR" Comment="Apply" Bounds="841,361,35,15" ShowValueBox="true" isIOBox="true" Value="false">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
             </p:TypeAnnotation>
@@ -187,14 +187,14 @@
               <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
             </p:ValueBoxSettings>
           </Pad>
-          <Pad Id="FoiVdfuFIfUMtuwQ5aaO3b" Comment="Position" Bounds="765,341,35,15" ShowValueBox="true" isIOBox="true" Value="42">
+          <Pad Id="FoiVdfuFIfUMtuwQ5aaO3b" Comment="Position" Bounds="802,342,35,15" ShowValueBox="true" isIOBox="true" Value="42">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="TypeFlag" Name="Float64" />
             </p:TypeAnnotation>
           </Pad>
-          <Pad Id="Dx2jrexcBOxLScvgqZUSGg" Comment="Decode Path" Bounds="712,179,127,15" ShowValueBox="true" isIOBox="true" />
-          <Pad Id="VNg4hpNhYUoPHoHBJpMEFw" Comment="Position" Bounds="572,179,41,15" ShowValueBox="true" isIOBox="true" />
-          <Pad Id="AaBjZiFojyPQIAAbgowQfv" Bounds="739,242,209,57" ShowValueBox="true" isIOBox="true" Value="&lt;&lt; This is for those who need more advanced control, delivered from the bottom up.">
+          <Pad Id="Dx2jrexcBOxLScvgqZUSGg" Comment="Decode Path" Bounds="749,181,120,15" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="VNg4hpNhYUoPHoHBJpMEFw" Comment="Position" Bounds="609,181,41,15" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="AaBjZiFojyPQIAAbgowQfv" Bounds="749,246,209,57" ShowValueBox="true" isIOBox="true" Value="&lt;&lt; This is for those who need more advanced control, delivered from the bottom up.">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="TypeFlag" Name="String" />
             </p:TypeAnnotation>
@@ -203,7 +203,7 @@
               <p:stringtype p:Assembly="VL.Core" p:Type="VL.Core.StringType">Comment</p:stringtype>
             </p:ValueBoxSettings>
           </Pad>
-          <Node Bounds="629,210,54,19" Id="NIU6cfExWQ3MvB6LpLcOJo">
+          <Node Bounds="666,211,54,19" Id="NIU6cfExWQ3MvB6LpLcOJo">
             <p:NodeReference LastCategoryFullName="Control" LastDependency="VL.CoreLib.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <Choice Kind="ProcessAppFlag" Name="OnOpen" />
@@ -212,7 +212,7 @@
             <Pin Id="F8Y18jbGcyfM7s6WCO9siY" Name="Simulate" Kind="InputPin" />
             <Pin Id="AwAW976vBRgLKGZkRgBVmg" Name="Output" Kind="OutputPin" />
           </Node>
-          <Node Bounds="550,420,84,26" Id="BjxxSpiEtPRM3qFkV0N2uM">
+          <Node Bounds="587,421,84,26" Id="BjxxSpiEtPRM3qFkV0N2uM">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -222,7 +222,7 @@
             <Pin Id="BifAFCuT1AoLYTMHdIcRM2" Name="Output" Kind="StateOutputPin" />
             <Pin Id="BSa9yA43u0rOtF9t0tScvE" Name="Apply" Kind="InputPin" />
           </Node>
-          <Node Bounds="550,469,84,26" Id="SxqP7YWRxWQNoV5ayseIK2">
+          <Node Bounds="587,470,84,26" Id="SxqP7YWRxWQNoV5ayseIK2">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -232,7 +232,7 @@
             <Pin Id="Djpyg1bUOGvOGZhkUwsVNY" Name="Output" Kind="StateOutputPin" />
             <Pin Id="GG1DtUtB6mcLp53kJBqOxm" Name="Apply" Kind="InputPin" />
           </Node>
-          <Pad Id="NNBqwN4HVRwOFPlkTiPyh2" Comment="Apply" Bounds="631,459,35,15" ShowValueBox="true" isIOBox="true" Value="false">
+          <Pad Id="NNBqwN4HVRwOFPlkTiPyh2" Comment="Apply" Bounds="668,460,35,15" ShowValueBox="true" isIOBox="true" Value="false">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
             </p:TypeAnnotation>
@@ -240,7 +240,7 @@
               <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
             </p:ValueBoxSettings>
           </Pad>
-          <Pad Id="B4nCgM1sfy8MwQchJPqX2l" Comment="Apply" Bounds="631,409,35,15" ShowValueBox="true" isIOBox="true" Value="false">
+          <Pad Id="B4nCgM1sfy8MwQchJPqX2l" Comment="Apply" Bounds="668,410,35,15" ShowValueBox="true" isIOBox="true" Value="false">
             <p:TypeAnnotation LastCategoryFullName="Primitive" LastDependency="VL.CoreLib.vl">
               <Choice Kind="ImmutableTypeFlag" Name="Boolean" />
             </p:TypeAnnotation>
@@ -248,7 +248,7 @@
               <p:buttonmode p:Assembly="VL.UI.Forms" p:Type="VL.HDE.PatchEditor.Editors.ButtonModeEnum">Bang</p:buttonmode>
             </p:ValueBoxSettings>
           </Pad>
-          <Node Bounds="550,501,84,26" Id="MyVy0ffZpJrMURCRnY2W9b">
+          <Node Bounds="587,502,84,26" Id="MyVy0ffZpJrMURCRnY2W9b">
             <p:NodeReference LastCategoryFullName="Video.FFmpeg.VideoPlayerControl" LastDependency="VL.FFmpeg.vl">
               <Choice Kind="NodeFlag" Name="Node" Fixed="true" />
               <FullNameCategoryReference ID="Video.FFmpeg.VideoPlayerControl" />
@@ -258,7 +258,7 @@
             <Pin Id="GSwPfixSr6RNVvuCbzJIOx" Name="Output" Kind="StateOutputPin" />
             <Pin Id="EUyCJgHGYmuPgc2kRD6rQN" Name="Status" Kind="OutputPin" />
           </Node>
-          <Pad Id="RYNMKOcT6GDLzQvRSvORps" Comment="Status" Bounds="631,540,209,64" ShowValueBox="true" isIOBox="true" />
+          <Pad Id="RYNMKOcT6GDLzQvRSvORps" Comment="Status" Bounds="668,541,209,64" ShowValueBox="true" isIOBox="true" />
         </Canvas>
         <Patch Id="LELOXi7S1P4M414LVYeZxg" Name="Create" />
         <Patch Id="SdEgnfRfDBHOLf4kARRRmZ" Name="Update" />
@@ -278,7 +278,6 @@
         <Link Id="U9Gm5Wo28Y3QIXpjsRtEz8" Ids="Bet2zNNzrJdOj9ZcfXgGrp,Oe8rfa0JzveLPMjBLKiph5" />
         <Link Id="Ts6uu2jxVOkLTxnY7zD8KN" Ids="U3a1nvPyDjHMjJfB9WYzmU,L4IKt2EnrU8MJUJNFsLTei" />
         <Link Id="HXrz6HPGyXJNS9ncoZIMkR" Ids="KBHaJnGu8MlLZDxtFquyPj,Bc0FeYHcr1zM0LcsZt21ey" />
-        <Link Id="Vrg2Yk8W3YMQVeSbbIZX6M" Ids="CgKEUK7a1LvOERVlAE54I6,PbnXUl0jQg9LwuItR9VO0O" />
         <Link Id="Nr6klvU9cAZLoBWrYGryWU" Ids="P5mOdhi5xMnOfOFUr5pJk7,UT0WkEDPOP3LuRCR7dtMeT" />
         <Link Id="OPGRd8OH2SxOhTZ0FaFZxs" Ids="KqJgREefvkvNJnhrtS2kn2,KoKj3FKAO01LJ1eOGNfllq" />
         <Link Id="DroObGMdAWZQDZdZfWrADn" Ids="PEJjLw03PucMOl3XMepHQD,GZgJ8u9fUWOPuDzcP8ojxo" />
@@ -296,9 +295,10 @@
         <Link Id="TChuuP8aVzJNpVVH08ykwx" Ids="PEJjLw03PucMOl3XMepHQD,K1Xuf76wfeGNRN3InQ6wL9" />
         <Link Id="Qv5lcI4DPyMOJaLqtpoQbl" Ids="Djpyg1bUOGvOGZhkUwsVNY,U6aUmMoVVIuLyyhtikO6cF" />
         <Link Id="SNYPGL7ZTSVQZlR3JlYWTy" Ids="EUyCJgHGYmuPgc2kRD6rQN,RYNMKOcT6GDLzQvRSvORps" />
+        <Link Id="A8C11yzb5vvOjdOoseQfnX" Ids="CgKEUK7a1LvOERVlAE54I6,PbnXUl0jQg9LwuItR9VO0O" />
       </Patch>
     </Node>
   </Patch>
-  <NugetDependency Id="AXmKmrFRwjpPCsYM2oZg87" Location="VL.FFmpeg" Version="0.0.0" />
+  <NugetDependency Id="AXmKmrFRwjpPCsYM2oZg87" Location="VL.FFmpeg" Version="1.0.1" />
   <NugetDependency Id="KPW8u1r0atIMny4p7IBKIY" Location="VL.Stride" Version="2025.7.4-0015-ge855ca6589" />
 </Document>
