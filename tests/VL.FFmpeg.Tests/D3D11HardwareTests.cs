@@ -198,6 +198,65 @@ public sealed unsafe class D3D11HardwareTests
         }
     }
 
+    [TestCase(false)]
+    [TestCase(true)]
+    [Platform("Win")]
+    public void SoftwareDecodeUsesTheConsumerGpuForConversion(bool linearOutput)
+    {
+        var filename = FindGammaReferenceClip();
+        if (filename is null)
+            Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
+
+        var createResult = CreateD3D11Device(out var device, out var immediateContext);
+        if (createResult < 0 || device == 0)
+            Assert.Ignore($"No hardware D3D11 device is available (HRESULT 0x{createResult:X8}).");
+
+        var decodedFrames = new List<DecodedVideoFrame>();
+        try
+        {
+            using var decoder = new FFmpegVideoDecoder(
+                filename,
+                TimeSpan.Zero,
+                CancellationToken.None,
+                FindRepositoryRuntime(),
+                DecodeMode.Software,
+                graphicsDevice: device,
+                graphicsDeviceType: GraphicsDeviceType.Direct3D11,
+                usesLinearColorspace: linearOutput);
+            decoder.Decode(frame =>
+            {
+                decodedFrames.Add(frame);
+                return decodedFrames.Count < 2;
+            });
+
+            Assert.That(decodedFrames, Has.Count.EqualTo(2));
+            foreach (var decodedFrame in decodedFrames)
+            {
+                using var handle = decodedFrame.CreateProvider().GetHandle();
+                using (Assert.EnterMultipleScope())
+                {
+                    Assert.That(decodedFrame.DecodePath, Is.EqualTo(DecodePath.SoftwareGpuTexture));
+                    Assert.That(decodedFrame.DecodeStatus, Does.Contain("D3D11"));
+                    Assert.That(handle.Resource.TryGetTexture(out var texture), Is.True);
+                    Assert.That(texture.NativePointer, Is.Not.EqualTo(nint.Zero));
+                    Assert.That(handle.Resource.TryGetMemory(out _), Is.False);
+                    Assert.That(handle.Resource.PixelFormat, Is.EqualTo(linearOutput
+                        ? VL.Lib.Basics.Imaging.PixelFormat.R16G16B16A16F
+                        : VL.Lib.Basics.Imaging.PixelFormat.B8G8R8A8));
+                }
+            }
+        }
+        finally
+        {
+            foreach (var decodedFrame in decodedFrames)
+                decodedFrame.Dispose();
+            if (immediateContext != 0)
+                Marshal.Release(immediateContext);
+            if (device != 0)
+                Marshal.Release(device);
+        }
+    }
+
     [Test]
     [Platform("Win")]
     public void PlayerSessionDeliversGpuFrameThroughResourceProvider()

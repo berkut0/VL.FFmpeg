@@ -27,6 +27,9 @@ internal readonly record struct VideoColorInfo(
     public string Description
         => $"{MatrixName} {(FullRange ? "full" : "limited")}{Assumptions}";
 
+    public string RgbDescription
+        => $"RGB full{(TransferAssumed ? " (transfer metadata assumed)" : string.Empty)}";
+
     public bool IsHdr => Transfer == VideoTransferFunction.Hdr;
 
     public int GetDxgiInputColorSpace()

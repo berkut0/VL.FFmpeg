@@ -29,6 +29,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     private SwsContext* _swsContext;
     private AVBufferRef* _hardwareDeviceReference;
     private D3D11TexturePool? _texturePool;
+    private SoftwareD3D11FrameConverter? _softwareGpuConverter;
+    private string? _softwareGpuUnavailableReason;
+    private string? _softwareGpuFrameStatus;
     private AVStream* _videoStream;
     private int _videoStreamIndex = -1;
     private long _decodedFrameCount;
@@ -147,6 +150,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         _texturePool?.Dispose();
         _texturePool = null;
 
+        _softwareGpuConverter?.Dispose();
+        _softwareGpuConverter = null;
+
         if (_frame is not null)
         {
             var frame = _frame;
@@ -247,6 +253,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         Check(
             ffmpeg.avcodec_parameters_to_context(_codecContext, _videoStream->codecpar),
             "copy video codec parameters");
+        // Auto threading can retain too many UHD software frames; eight keeps
+        // decode parallel while bounding native frame memory.
+        _codecContext->thread_count = Math.Min(Environment.ProcessorCount, 8);
         ConfigureHardwareDecoder();
         var codecOpenResult = ffmpeg.avcodec_open2(_codecContext, decoder, null);
         if (codecOpenResult < 0 && _hardwareConfigured)
@@ -353,6 +362,47 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         if (_usesLinearColorspace && color.IsHdr)
             throw new NotSupportedException("HDR tone mapping is not implemented for linear output.");
 
+        if (_graphicsDeviceType == GraphicsDeviceType.Direct3D11
+            && _graphicsDevice != nint.Zero
+            && _softwareGpuUnavailableReason is null)
+        {
+            try
+            {
+                _softwareGpuConverter ??= new SoftwareD3D11FrameConverter(
+                    _graphicsDevice,
+                    _usesLinearColorspace);
+                if (_softwareGpuConverter.TryConvert(
+                        frame,
+                        color,
+                        _cancellationToken,
+                        out var gpuLease,
+                        out var gpuStatus))
+                {
+                    if (!ReferenceEquals(_softwareGpuFrameStatus, gpuStatus))
+                    {
+                        _softwareGpuFrameStatus = gpuStatus;
+                        _decodeStatus = fallbackStatus + gpuStatus;
+                    }
+                    return new GpuDecodedVideoFrame(
+                        gpuLease!,
+                        ReadTimecode(frame),
+                        MediaInfo.FrameRate,
+                        _decodeStatus,
+                        DecodePath.SoftwareGpuTexture);
+                }
+
+                _softwareGpuUnavailableReason = gpuStatus;
+                _softwareGpuConverter.Dispose();
+                _softwareGpuConverter = null;
+            }
+            catch (Exception exception) when (exception is not OperationCanceledException)
+            {
+                _softwareGpuUnavailableReason = exception.Message;
+                _softwareGpuConverter?.Dispose();
+                _softwareGpuConverter = null;
+            }
+        }
+
         var outputPixelFormat = _usesLinearColorspace
             ? AVPixelFormat.AV_PIX_FMT_RGBA64LE
             : AVPixelFormat.AV_PIX_FMT_BGRA;
@@ -417,7 +467,11 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         }
 
         var outputDescription = _usesLinearColorspace ? "linear RGBA16F" : "nonlinear BGRA8";
-        _decodeStatus = $"{fallbackStatus}Software {color.Description} -> {outputDescription}; transfer {color.TransferName}";
+        var softwareFallback = _softwareGpuUnavailableReason is null
+            ? string.Empty
+            : $"Software CPU fallback; {_softwareGpuUnavailableReason}; ";
+        var inputColorDescription = sourceIsRgb ? color.RgbDescription : color.Description;
+        _decodeStatus = $"{fallbackStatus}{softwareFallback}Software {inputColorDescription} -> {outputDescription}; transfer {color.TransferName}";
         if (color.IsHdr)
             _decodeStatus += "; HDR tone mapping is not implemented";
         if (_usesLinearColorspace)

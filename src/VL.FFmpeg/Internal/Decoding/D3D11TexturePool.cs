@@ -5,7 +5,12 @@ using VL.Lib.Basics.Video;
 
 namespace VL.FFmpeg.Internal.Decoding;
 
-internal unsafe sealed class D3D11TextureLease : IDisposable
+internal interface ID3D11TextureLease : IDisposable
+{
+    VideoTexture Texture { get; }
+}
+
+internal unsafe sealed class D3D11TextureLease : ID3D11TextureLease
 {
     private D3D11TexturePool? _pool;
     private D3D11TexturePool.Slot? _slot;
@@ -34,7 +39,7 @@ internal unsafe sealed class D3D11TextureLease : IDisposable
 
 internal unsafe sealed class D3D11TexturePool : IDisposable
 {
-    internal const int Capacity = 6;
+    internal const int Capacity = 3;
 
     private readonly object _syncRoot = new();
     private readonly ID3D11Device* _device;
@@ -52,6 +57,9 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
     private void* _enumerator;
     private void* _processor;
     private int _inputFormat;
+    private int _nextSlotIndex;
+    private VideoColorInfo? _statusColor;
+    private string? _status;
     private bool _disposed;
 
     internal D3D11TexturePool(AVD3D11VADeviceContext* context, bool linearOutput)
@@ -190,20 +198,24 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
                     frame->height,
                     inputColorSpace,
                     _linearOutput);
-                D3D11Interop.Flush(_deviceContext);
             }
             finally
             {
                 ExitDeviceLock();
             }
 
-            var formatName = sourceDescription.Format == D3D11Interop.DxgiFormatP010
-                ? "P010"
-                : "NV12";
-            var outputName = _linearOutput ? "linear GPU RGBA16F" : "nonlinear GPU BGRA8";
-            status = $"D3D11VA {formatName}, {color.Description} -> {outputName}; transfer {color.TransferName}";
-            if (color.IsHdr)
-                status += "; HDR tone mapping is not implemented";
+            if (_status is null || _statusColor != color)
+            {
+                var formatName = sourceDescription.Format == D3D11Interop.DxgiFormatP010
+                    ? "P010"
+                    : "NV12";
+                var outputName = _linearOutput ? "linear GPU RGBA16F" : "nonlinear GPU BGRA8";
+                _status = $"D3D11VA {formatName}, {color.Description} -> {outputName}; transfer {color.TransferName}";
+                if (color.IsHdr)
+                    _status += "; HDR tone mapping is not implemented";
+                _statusColor = color;
+            }
+            status = _status;
             return new D3D11TextureLease(this, slot);
         }
         catch
@@ -324,10 +336,13 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
 
     private bool TryRent(out Slot slot)
     {
-        foreach (var candidate in _slots)
+        for (var offset = 0; offset < _slots.Count; offset++)
         {
+            var index = (_nextSlotIndex + offset) % _slots.Count;
+            var candidate = _slots[index];
             if (candidate.InUse)
                 continue;
+            _nextSlotIndex = (index + 1) % _slots.Count;
             slot = candidate;
             return true;
         }

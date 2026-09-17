@@ -9,7 +9,7 @@ namespace VL.FFmpeg.Internal;
 
 internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
 {
-    private const int QueueCapacity = 4;
+    private const int QueueCapacity = 2;
     private const double PresentationEpsilon = 0.001;
 
     private readonly object _syncRoot = new();

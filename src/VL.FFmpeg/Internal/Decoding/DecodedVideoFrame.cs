@@ -73,19 +73,20 @@ internal sealed class CpuDecodedVideoFrame : DecodedVideoFrame
 
 internal sealed class GpuDecodedVideoFrame : DecodedVideoFrame
 {
-    private D3D11TextureLease? _lease;
+    private ID3D11TextureLease? _lease;
 
     public GpuDecodedVideoFrame(
-        D3D11TextureLease lease,
+        ID3D11TextureLease lease,
         TimeSpan timecode,
         (int N, int D) frameRate,
-        string decodeStatus)
+        string decodeStatus,
+        DecodePath decodePath = DecodePath.D3D11VaGpuTexture)
         : base(
             lease.Texture.Width,
             lease.Texture.Height,
             timecode,
             frameRate,
-            DecodePath.D3D11VaGpuTexture,
+            decodePath,
             decodeStatus)
     {
         _lease = lease;

@@ -34,14 +34,17 @@ There is no Skia- or Stride-specific public API. Both renderers consume
   of transport inputs. Its operations can be called from separate patch locations.
 - `D3D11TexturePool` converts NV12/P010 decoder surfaces into leased nonlinear
   BGRA8 or linear RGBA16F textures on the consumer device.
+- `SoftwareD3D11FrameConverter` uploads software-decoded planes and performs
+  matrix, range, transfer and alpha conversion with one embedded HLSL shader.
 - `FFmpegRuntime` resolves the pinned Windows x64 native runtime.
 - Relocated FFmpeg.AutoGen source is compiled into `VL.FFmpeg.dll` under
   `VL.FFmpeg.Interop.AutoGen`. Gamma imports only `VL.FFmpeg.Nodes`.
 
 ## Scope
 
-Implemented: local-file software and shared-device D3D11VA decode, color
-matrix/range conversion, nonlinear BGRA8 and linear RGBA16F frames,
+Implemented: local-file software and shared-device D3D11VA decode, GPU color
+conversion for common planar YUV(A), planar RGB(A), semiplanar and packed RGBA
+software frames, CPU fallback for other layouts, nonlinear BGRA8 and linear RGBA16F frames,
 VL.Audio-compatible float audio frames, play/pause/stop/close, seek, EOF,
 basic loop and object-based transport control.
 Auto mode falls back to software;
@@ -63,6 +66,11 @@ long-term A/V clock policy is an unresolved product decision.
 - Worker shutdown completes before native contexts are released.
 - Native runtime location is process-stable after first successful load.
 - A GPU texture slot is not reused until the consumer handle releases it.
-- D3D11VA binds to the device from `VideoPlaybackContext`. The package has no
-  renderer dependency and does not create a hidden graphics device.
+- Every GPU path uses only the device from `VideoPlaybackContext`. The package
+  has no renderer dependency and does not create a hidden graphics device.
+- Software GPU conversion is selected from the decoded pixel layout, never the codec ID.
+- Software decode performs one CPU-to-GPU plane upload and no CPU color conversion
+  when its pixel layout is supported by the D3D11 converter.
+- FFmpeg software decoding uses at most eight codec threads so high-resolution
+  frame-threaded formats gain throughput without unbounded native frame memory.
 - Frame format follows `VideoPlaybackContext.UsesLinearColorspace`.

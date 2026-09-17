@@ -15,13 +15,16 @@ Windows x64.
 - Optional `VideoPlayer (Advanced Controls)` node with a reusable transport-control object
 - Works with Skia and Stride through the standard video nodes
 - Decodes audio through the standard VL.Audio `IAudioSource` consumer
-- GPU decode when the renderer can take a texture, otherwise software
+- D3D11VA decode when available
+- GPU upload and color conversion for supported software-decoded pixel formats
 - BT.601/BT.709/BT.2020 matrix and full/limited-range conversion
 - Nonlinear BGRA8 or linear RGBA16F output according to the consumer
 - Keeps decoding off the render thread
 
-`Decode Mode` defaults to `Auto`: GPU when the consumer asks for it, software
-otherwise. Explicit `Hardware` mode fails instead of falling back. HDR tone
+`Decode Mode` defaults to `Auto`: D3D11VA when the consumer and stream support
+it, software decode otherwise. A software-decoded frame still stays on the GPU
+after one plane upload when the consumer supplies a D3D11 device. Explicit
+`Hardware` mode requires D3D11VA and fails instead of falling back. HDR tone
 mapping is not implemented.
 
 Use `VideoPlayer` for conventional pin-based transport. Use
@@ -35,6 +38,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File eng\Acquire-FFmpegRuntime.ps
 dotnet test tests\VL.FFmpeg.Tests\VL.FFmpeg.Tests.csproj -c Release
 powershell -NoProfile -ExecutionPolicy Bypass -File eng\Pack.ps1
 ```
+
+The precompiled HLSL bytecode is committed and embedded in `VL.FFmpeg.dll`.
+After changing `src\VL.FFmpeg\Shaders\VideoConvert.hlsl`, rebuild it with
+`eng\Compile-Shaders.ps1`; normal builds do not require the Windows SDK shader
+compiler.
 
 The five FFmpeg 8.1 shared libraries and their LGPL text are committed. The
 acquire script verifies their SHA-256; it does not download anything.

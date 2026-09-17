@@ -106,10 +106,6 @@ internal static unsafe class D3D11Interop
         return texture;
     }
 
-    internal static void Flush(ID3D11DeviceContext* context)
-        => ((delegate* unmanaged[Stdcall]<ID3D11DeviceContext*, void>)
-            context->lpVtbl->Flush)(context);
-
     internal static void* CreateVideoProcessorEnumerator(
         ID3D11VideoDevice* device,
         int width,

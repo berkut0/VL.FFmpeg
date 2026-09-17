@@ -5,7 +5,7 @@
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <OutputPath>..\..\lib\</OutputPath>
     <PlatformTarget>x64</PlatformTarget>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <IsPackable>false</IsPackable>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <NoWarn>$(NoWarn);108;169;618;1573;1591;1701;1702;1705;8981</NoWarn>
@@ -23,5 +23,14 @@
              Exclude="..\..\third_party\FFmpeg.AutoGen\bin\**;..\..\third_party\FFmpeg.AutoGen\obj\**">
       <Link>Interop\AutoGen\%(RecursiveDir)%(Filename)%(Extension)</Link>
     </Compile>
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Shaders\VideoConvert.vs.cso"
+                      LogicalName="VL.FFmpeg.Shaders.VideoConvert.vs.cso"
+                      WithCulture="false" />
+    <EmbeddedResource Include="Shaders\VideoConvert.ps.cso"
+                      LogicalName="VL.FFmpeg.Shaders.VideoConvert.ps.cso"
+                      WithCulture="false" />
   </ItemGroup>
 </Project>
