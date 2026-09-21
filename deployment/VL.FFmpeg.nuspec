@@ -24,6 +24,7 @@
     <file src="..\THIRD-PARTY-NOTICES.md" target="" />
     <file src="..\LICENSE" target="LICENSES\VL.FFmpeg" />
     <file src="..\LICENSES\FFmpeg-LGPL-3.0.txt" target="LICENSES" />
+    <file src="..\LICENSES\libvpx-BSD-3-Clause.txt" target="LICENSES" />
     <file src="..\third_party\FFmpeg.AutoGen\LICENSE.txt" target="LICENSES\FFmpeg.AutoGen" />
   </files>
 </package>

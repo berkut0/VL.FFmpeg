@@ -20,7 +20,8 @@ There is no Skia- or Stride-specific public API. Both renderers consume
 
 ## Components
 
-- `FFmpegVideoDecoder` owns demux, codec and software/D3D11VA decode contexts.
+- `FFmpegVideoDecoder` owns demux, codec selection and software/D3D11VA decode
+  contexts.
 - `FFmpegAudioDecoder` owns a separate audio demux/codec pipeline and converts
   decoded samples to planar float through libswresample.
 - `FFmpegAudioSession` fills a bounded `AudioSampleBuffer`; audio pulls never
@@ -40,6 +41,20 @@ There is no Skia- or Stride-specific public API. Both renderers consume
 - Relocated FFmpeg.AutoGen source is compiled into `VL.FFmpeg.dll` under
   `VL.FFmpeg.Interop.AutoGen`. Gamma imports only `VL.FFmpeg.Nodes`.
 
+## Alpha
+
+Alpha stays generic after decode: conversion follows the actual FFmpeg pixel
+layout and preserves formats marked with `AV_PIX_FMT_FLAG_ALPHA`.
+
+For Matroska/WebM VP8/VP9 streams that declare alpha, `Auto` and `Software`
+prefer the corresponding libvpx decoder. Explicit `Hardware` mode keeps its
+hardware-only contract. If declared alpha decodes to a format without alpha,
+playback continues opaque and the existing `Status` output reports the
+degradation.
+
+Auxiliary-layer and separate-video-stream alpha require composition outside the
+current single-stream decoder and are not supported.
+
 ## Scope
 
 Implemented: local-file software and shared-device D3D11VA decode, GPU color
@@ -51,7 +66,8 @@ Auto mode falls back to software;
 explicit Hardware mode faults when unavailable.
 
 Not implemented: D3D11VA private-device CPU transfer, playback rate,
-subtitles, encoding, camera capture, HDR tone mapping and network streams.
+subtitles, encoding, camera capture, HDR tone mapping, network streams and
+auxiliary-layer or multi-stream alpha composition.
 
 Audio and video currently use separate FFmpeg demux contexts. They share
 transport commands, while video presentation remains frame-clock-driven. The
@@ -69,6 +85,9 @@ long-term A/V clock policy is an unresolved product decision.
 - Every GPU path uses only the device from `VideoPlaybackContext`. The package
   has no renderer dependency and does not create a hidden graphics device.
 - Software GPU conversion is selected from the decoded pixel layout, never the codec ID.
+- Alpha is accepted only from a decoded pixel layout that FFmpeg marks as
+  alpha-bearing; container declarations affect decoder selection and status,
+  not frame conversion.
 - Software decode performs one CPU-to-GPU plane upload and no CPU color conversion
   when its pixel layout is supported by the D3D11 converter.
 - FFmpeg software decoding uses at most eight codec threads so high-resolution

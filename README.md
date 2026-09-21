@@ -17,6 +17,7 @@ Windows x64.
 - Decodes audio through the standard VL.Audio `IAudioSource` consumer
 - D3D11VA decode when available
 - GPU upload and color conversion for supported software-decoded pixel formats
+- Preserves decoded-frame alpha, including WebM VP8/VP9 alpha in `Auto` and `Software`
 - BT.601/BT.709/BT.2020 matrix and full/limited-range conversion
 - Nonlinear BGRA8 or linear RGBA16F output according to the consumer
 - Keeps decoding off the render thread
@@ -26,6 +27,12 @@ it, software decode otherwise. A software-decoded frame still stays on the GPU
 after one plane upload when the consumer supplies a D3D11 device. Explicit
 `Hardware` mode requires D3D11VA and fails instead of falling back. HDR tone
 mapping is not implemented.
+
+Alpha propagation is driven by the decoded pixel format. For Matroska/WebM
+VP8/VP9 streams that declare alpha, `Auto` and `Software` prefer libvpx;
+explicit `Hardware` mode remains hardware-only. If a declared alpha channel is
+not decoded, playback continues opaque and `Status` reports the degradation.
+Auxiliary-layer and separate-track alpha are not combined.
 
 Use `VideoPlayer` for conventional pin-based transport. Use
 `VideoPlayer (Advanced Controls)` when separate parts of a patch need to call `Open`,

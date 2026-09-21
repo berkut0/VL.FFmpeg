@@ -27,9 +27,15 @@ license text are committed in this repository and verified by
 - libraries: `avcodec-62`, `avformat-62`, `avutil-60`, `swresample-6`,
   `swscale-9`
 
-FFmpeg and enabled components are LGPL 3. The shared libraries may be replaced
-with ABI-compatible modified versions. The package does not restrict reverse
-engineering for debugging such modifications.
+FFmpeg is LGPL 3. Enabled external libraries retain their own licenses. The
+shared libraries may be replaced with ABI-compatible modified versions. The
+package does not restrict reverse engineering for debugging such modifications.
+
+## libvpx
+
+The FFmpeg build includes libvpx for VP8/VP9 decoding. libvpx is licensed under
+the BSD 3-Clause license. Its notice is packaged as
+`LICENSES/libvpx-BSD-3-Clause.txt`.
 
 ## FFmpeg.AutoGen
 
@@ -37,5 +43,5 @@ Generated binding source from `FFmpeg.AutoGen 8.1.0`, upstream commit
 `444925cd53d3611fd4c8c295873fb631be56ab21`, is vendored under the MIT License.
 It is compiled into `VL.FFmpeg.dll` with a relocated namespace so it does not
 conflict with `FFmpeg.AutoGen 3.4.0.2` used by Stride.Video. See
-`LICENSES/FFmpeg.AutoGen-MIT.txt` in the package and
+`LICENSES/FFmpeg.AutoGen/LICENSE.txt` in the package and
 `third_party/FFmpeg.AutoGen/UPSTREAM.md` in the source repository.

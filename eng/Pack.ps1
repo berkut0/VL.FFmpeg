@@ -39,6 +39,7 @@ $requiredFiles = @(
     'runtimes\win-x64\native\swresample-6.dll',
     'runtimes\win-x64\native\swscale-9.dll',
     'LICENSES\FFmpeg-LGPL-3.0.txt',
+    'LICENSES\libvpx-BSD-3-Clause.txt',
     'help\HowTo FFmpeg Video Playback.vl'
 )
 foreach ($relativePath in $requiredFiles) {
@@ -110,6 +111,7 @@ try {
             'VL.FFmpeg.vl',
             'lib/net8.0/VL.FFmpeg.dll',
             'lib/net8.0/VL.FFmpeg.xml',
+            'LICENSES/libvpx-BSD-3-Clause.txt',
             'help/HowTo FFmpeg Video Playback.vl'
         )
         foreach ($entry in $requiredEntries) {

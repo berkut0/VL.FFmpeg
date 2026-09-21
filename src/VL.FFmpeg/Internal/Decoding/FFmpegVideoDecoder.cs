@@ -34,6 +34,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     private string? _softwareGpuFrameStatus;
     private AVStream* _videoStream;
     private int _videoStreamIndex = -1;
+    private bool _sourceDeclaresAlpha;
     private long _decodedFrameCount;
     private TimeSpan _minimumTimecode;
     private string _decodeStatus = "Software BGRA8";
@@ -246,6 +247,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         if (_videoStream is null || _videoStream->codecpar is null)
             throw new InvalidDataException("The selected FFmpeg video stream has no codec parameters.");
 
+        _sourceDeclaresAlpha = SourceDeclaresAlpha(_videoStream);
+        decoder = SelectVideoDecoder(decoder);
+
         _codecContext = ffmpeg.avcodec_alloc_context3(decoder);
         if (_codecContext is null)
             throw new OutOfMemoryException("FFmpeg could not allocate AVCodecContext.");
@@ -286,6 +290,37 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             Duration: duration,
             FrameRate: frameRate,
             VideoCodec: ffmpeg.avcodec_get_name(codecParameters->codec_id));
+    }
+
+    private AVCodec* SelectVideoDecoder(AVCodec* defaultDecoder)
+    {
+        if (!_sourceDeclaresAlpha || _decodeMode == DecodeMode.Hardware)
+            return defaultDecoder;
+
+        var decoderName = _videoStream->codecpar->codec_id switch
+        {
+            AVCodecID.AV_CODEC_ID_VP8 => "libvpx",
+            AVCodecID.AV_CODEC_ID_VP9 => "libvpx-vp9",
+            _ => null
+        };
+        if (decoderName is null)
+            return defaultDecoder;
+
+        var preferredDecoder = ffmpeg.avcodec_find_decoder_by_name(decoderName);
+        return preferredDecoder is null ? defaultDecoder : preferredDecoder;
+    }
+
+    private static bool SourceDeclaresAlpha(AVStream* stream)
+    {
+        if (stream->codecpar->alpha_mode != AVAlphaMode.AVALPHA_MODE_UNSPECIFIED)
+            return true;
+
+        var entry = ffmpeg.av_dict_get(stream->metadata, "alpha_mode", null, 0);
+        if (entry is null)
+            return false;
+
+        var value = Marshal.PtrToStringUTF8((nint)entry->value);
+        return !string.IsNullOrWhiteSpace(value) && value != "0";
     }
 
     private bool ReceiveFrames(Func<DecodedVideoFrame, bool> acceptFrame)
@@ -335,12 +370,12 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
                 MediaInfo.FrameRate,
                 _cancellationToken,
                 out var hardwareStatus);
-            _decodeStatus = hardwareStatus;
+            _decodeStatus = WithAlphaStatus(frame, hardwareStatus);
             return new GpuDecodedVideoFrame(
                 lease,
                 ReadTimecode(frame),
                 MediaInfo.FrameRate,
-                hardwareStatus);
+                _decodeStatus);
         }
 
         if (_decodeMode == DecodeMode.Hardware)
@@ -381,7 +416,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
                     if (!ReferenceEquals(_softwareGpuFrameStatus, gpuStatus))
                     {
                         _softwareGpuFrameStatus = gpuStatus;
-                        _decodeStatus = fallbackStatus + gpuStatus;
+                        _decodeStatus = WithAlphaStatus(frame, fallbackStatus + gpuStatus);
                     }
                     return new GpuDecodedVideoFrame(
                         gpuLease!,
@@ -474,6 +509,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         _decodeStatus = $"{fallbackStatus}{softwareFallback}Software {inputColorDescription} -> {outputDescription}; transfer {color.TransferName}";
         if (color.IsHdr)
             _decodeStatus += "; HDR tone mapping is not implemented";
+        _decodeStatus = WithAlphaStatus(frame, _decodeStatus);
         if (_usesLinearColorspace)
             color.LinearizeRgba64(pixels);
 
@@ -485,6 +521,21 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             frameRate: MediaInfo.FrameRate,
             decodeStatus: _decodeStatus,
             linear: _usesLinearColorspace);
+    }
+
+    private string WithAlphaStatus(AVFrame* frame, string status)
+    {
+        if (!_sourceDeclaresAlpha)
+            return status;
+
+        var descriptor = ffmpeg.av_pix_fmt_desc_get((AVPixelFormat)frame->format);
+        if (descriptor is not null
+            && (descriptor->flags & (ulong)ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0)
+        {
+            return status;
+        }
+
+        return $"{status}; alpha declared but unavailable; output is opaque";
     }
 
     private void ConfigureHardwareDecoder()

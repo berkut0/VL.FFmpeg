@@ -1,10 +1,85 @@
 using NUnit.Framework;
 using VL.FFmpeg.Internal.Decoding;
+using VL.FFmpeg.Nodes;
 
 namespace VL.FFmpeg.Tests;
 
 public sealed class FFmpegVideoDecoderTests
 {
+    [TestCase("vp8-alpha.webm", DecodeMode.Auto)]
+    [TestCase("vp9-alpha.webm", DecodeMode.Auto)]
+    [TestCase("vp9-alpha.webm", DecodeMode.Software)]
+    public void WebMAlphaIsPreserved(string fixture, DecodeMode decodeMode)
+    {
+        var filename = Path.Combine(
+            FindRepositoryRoot(),
+            "tests",
+            "VL.FFmpeg.Tests",
+            "TestData",
+            fixture);
+        DecodedVideoFrame? decodedFrame = null;
+        using var decoder = new FFmpegVideoDecoder(
+            filename,
+            TimeSpan.Zero,
+            CancellationToken.None,
+            FindRepositoryRuntime(),
+            decodeMode: decodeMode);
+
+        decoder.Decode(frame =>
+        {
+            decodedFrame = frame;
+            return false;
+        });
+
+        Assert.That(decodedFrame, Is.Not.Null);
+        using var handle = decodedFrame!.CreateProvider().GetHandle();
+        Assert.That(handle.Resource.TryGetMemory(out var memory), Is.True);
+        var alpha = memory.ToArray().Where((_, index) => index % 4 == 3);
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(alpha, Has.All.EqualTo(63));
+            Assert.That(decodedFrame.DecodeStatus, Does.Not.Contain("alpha declared but unavailable"));
+        }
+        decodedFrame.Dispose();
+    }
+
+    [Test]
+    public void DeclaredAlphaWithoutDecodedAlphaReportsOpaqueFallback()
+    {
+        var filename = Path.Combine(
+            FindRepositoryRoot(),
+            "tests",
+            "VL.FFmpeg.Tests",
+            "TestData",
+            "vp9-declared-alpha-without-payload.webm");
+        DecodedVideoFrame? decodedFrame = null;
+        using var decoder = new FFmpegVideoDecoder(
+            filename,
+            TimeSpan.Zero,
+            CancellationToken.None,
+            FindRepositoryRuntime(),
+            decodeMode: DecodeMode.Software);
+
+        decoder.Decode(frame =>
+        {
+            decodedFrame = frame;
+            return false;
+        });
+
+        Assert.That(decodedFrame, Is.Not.Null);
+        using var handle = decodedFrame!.CreateProvider().GetHandle();
+        Assert.That(handle.Resource.TryGetMemory(out var memory), Is.True);
+        using (Assert.EnterMultipleScope())
+        {
+            Assert.That(
+                memory.ToArray().Where((_, index) => index % 4 == 3),
+                Has.All.EqualTo(255));
+            Assert.That(decodedFrame.DecodeStatus, Does.Contain("alpha declared but unavailable"));
+            Assert.That(decodedFrame.DecodeStatus, Does.Contain("output is opaque"));
+        }
+        decodedFrame.Dispose();
+    }
+
     [Test]
     public void SeekDiscardsKeyframePrerollBeforePublishing()
     {
@@ -130,24 +205,21 @@ public sealed class FFmpegVideoDecoderTests
 
     private static string? FindRepositoryRuntime()
     {
+        var candidate = Path.Combine(FindRepositoryRoot(), "runtimes", "win-x64", "native");
+        return File.Exists(Path.Combine(candidate, "avcodec-62.dll")) ? candidate : null;
+    }
+
+    private static string FindRepositoryRoot()
+    {
         var directory = new DirectoryInfo(TestContext.CurrentContext.TestDirectory);
         while (directory is not null)
         {
             if (File.Exists(Path.Combine(directory.FullName, "Directory.Build.props")))
-            {
-                var candidate = Path.Combine(
-                    directory.FullName,
-                    "runtimes",
-                    "win-x64",
-                    "native");
-                return File.Exists(Path.Combine(candidate, "avcodec-62.dll"))
-                    ? candidate
-                    : null;
-            }
+                return directory.FullName;
 
             directory = directory.Parent;
         }
 
-        return null;
+        throw new DirectoryNotFoundException("Repository root was not found.");
     }
 }

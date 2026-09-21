@@ -8,6 +8,7 @@ namespace VL.FFmpeg.Tests;
 public sealed unsafe class SoftwareFrameLayoutTests
 {
     [TestCase(AVPixelFormat.AV_PIX_FMT_YUV420P, 3, false, 8)]
+    [TestCase(AVPixelFormat.AV_PIX_FMT_YUVA420P, 4, true, 8)]
     [TestCase(AVPixelFormat.AV_PIX_FMT_YUV422P10LE, 3, false, 10)]
     [TestCase(AVPixelFormat.AV_PIX_FMT_YUVA444P12LE, 4, true, 12)]
     [TestCase(AVPixelFormat.AV_PIX_FMT_GBRAP16LE, 4, true, 16)]
