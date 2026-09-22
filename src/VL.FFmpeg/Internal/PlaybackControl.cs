@@ -35,6 +35,16 @@ internal sealed class PlaybackControl
                 seekRequestId++;
             _lastSeek = seek;
 
+            if (string.Equals(current.Filename, filename, StringComparison.Ordinal)
+                && current.Play == play
+                && current.Loop == loop
+                && current.SeekTime.Equals(seekTime)
+                && current.SeekRequestId == seekRequestId
+                && current.DecodeMode == decodeMode)
+            {
+                return;
+            }
+
             CommitLocked(current with
             {
                 Filename = filename,

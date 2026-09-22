@@ -26,6 +26,20 @@ public sealed class PlaybackControlTests
     }
 
     [Test]
+    public void UnchangedPinUpdatesDoNotAllocateOptions()
+    {
+        var control = new PlaybackControl(_ => { });
+        control.UpdateFromPins("", play: true, loop: false, seekTime: 0d, seek: false, DecodeMode.Auto);
+
+        var allocatedBefore = GC.GetAllocatedBytesForCurrentThread();
+        for (var index = 0; index < 1_000; index++)
+            control.UpdateFromPins("", play: true, loop: false, seekTime: 0d, seek: false, DecodeMode.Auto);
+        var allocated = GC.GetAllocatedBytesForCurrentThread() - allocatedBefore;
+
+        Assert.That(allocated, Is.Zero);
+    }
+
+    [Test]
     public void SeekAlwaysCreatesANewRequest()
     {
         var control = new PlaybackControl(_ => { });

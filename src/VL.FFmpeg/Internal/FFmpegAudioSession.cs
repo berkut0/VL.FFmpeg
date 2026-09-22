@@ -9,11 +9,10 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
     private readonly object _syncRoot = new();
     private readonly CancellationTokenSource _lifetimeCancellation = new();
     private readonly SemaphoreSlim _requestSignal = new(0, 1);
-    private readonly List<CancellationTokenSource> _retiredRequestCancellations = [];
     private readonly Task _worker;
     private PlaybackOptions _options;
     private DecodeRequest? _request;
-    private CancellationTokenSource? _requestCancellation;
+    private DecodeRequest? _activeDecodeRequest;
     private AudioSampleBuffer? _buffer;
     private TimeSpan _latestMediaTime;
     private long _nextGeneration;
@@ -24,7 +23,7 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
     public FFmpegAudioSession(PlaybackOptions options)
     {
         _options = options;
-        _worker = Task.Run(WorkerLoop);
+        _worker = Task.Run(WorkerLoopAsync);
     }
 
     public Exception? Fault => Volatile.Read(ref _fault);
@@ -109,7 +108,7 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
             if (_disposed)
                 return;
             _disposed = true;
-            _requestCancellation?.Cancel();
+            _request?.Cancellation.Cancel();
             _lifetimeCancellation.Cancel();
             _buffer?.Dispose();
         }
@@ -125,35 +124,36 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
         finally
         {
             _buffer?.Dispose();
-            _requestCancellation?.Dispose();
-            foreach (var cancellation in _retiredRequestCancellations)
-                cancellation.Dispose();
+            _request?.Cancellation.Dispose();
             _requestSignal.Dispose();
             _lifetimeCancellation.Dispose();
         }
     }
 
-    private void WorkerLoop()
+    private async Task WorkerLoopAsync()
     {
         var processedGeneration = -1L;
         while (!_lifetimeCancellation.IsCancellationRequested)
         {
             DecodeRequest? request;
             lock (_syncRoot)
+            {
                 request = _request;
+                if (request is not null && request.Generation != processedGeneration)
+                    _activeDecodeRequest = request;
+            }
 
             if (request is null || request.Generation == processedGeneration)
             {
-                _requestSignal.Wait(_lifetimeCancellation.Token);
+                await _requestSignal.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
                 continue;
             }
             processedGeneration = request.Generation;
-            if (string.IsNullOrWhiteSpace(request.Filename))
-                continue;
 
             try
             {
-                RunDecodeRequest(request);
+                if (!string.IsNullOrWhiteSpace(request.Filename))
+                    RunDecodeRequest(request);
             }
             catch (OperationCanceledException) when (
                 request.Cancellation.IsCancellationRequested
@@ -171,6 +171,10 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
                     }
                 }
             }
+            finally
+            {
+                CompleteDecodeRequest(request);
+            }
         }
     }
 
@@ -184,7 +188,7 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
                 initialPosition,
                 request.SampleRate,
                 request.ChannelCount,
-                request.Cancellation);
+                request.Cancellation.Token);
 
             AudioSampleBuffer buffer;
             lock (_syncRoot)
@@ -201,8 +205,8 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
 
             decoder.Decode(frame =>
             {
-                request.Cancellation.ThrowIfCancellationRequested();
-                buffer.Write(frame, request.Cancellation);
+                request.Cancellation.Token.ThrowIfCancellationRequested();
+                buffer.Write(frame, request.Cancellation.Token);
                 lock (_syncRoot)
                 {
                     if (_request?.Generation == request.Generation)
@@ -214,7 +218,7 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
                 return true;
             });
 
-            request.Cancellation.ThrowIfCancellationRequested();
+            request.Cancellation.Token.ThrowIfCancellationRequested();
             lock (_syncRoot)
             {
                 if (_request?.Generation != request.Generation)
@@ -236,11 +240,10 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
         int channelCount,
         int bufferCapacity)
     {
-        _requestCancellation?.Cancel();
-        if (_requestCancellation is not null)
-            _retiredRequestCancellations.Add(_requestCancellation);
-        _requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            _lifetimeCancellation.Token);
+        var retiredRequest = _request;
+        retiredRequest?.Cancellation.Cancel();
+        if (retiredRequest is not null && !ReferenceEquals(_activeDecodeRequest, retiredRequest))
+            retiredRequest.Cancellation.Dispose();
         _buffer?.Dispose();
         _buffer = null;
         _latestMediaTime = initialPosition;
@@ -253,7 +256,20 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
             sampleRate,
             channelCount,
             bufferCapacity,
-            _requestCancellation.Token);
+            CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token));
+    }
+
+    private void CompleteDecodeRequest(DecodeRequest request)
+    {
+        CancellationTokenSource? cancellation = null;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_activeDecodeRequest, request))
+                _activeDecodeRequest = null;
+            if (!ReferenceEquals(_request, request))
+                cancellation = request.Cancellation;
+        }
+        cancellation?.Dispose();
     }
 
     private void SignalWorker()
@@ -278,5 +294,5 @@ internal sealed class FFmpegAudioSession : IPlaybackOptionsSink, IDisposable
         int SampleRate,
         int ChannelCount,
         int BufferCapacity,
-        CancellationToken Cancellation);
+        CancellationTokenSource Cancellation);
 }

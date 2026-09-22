@@ -30,12 +30,11 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             AllowSynchronousContinuations = false
         });
     private readonly Task _worker;
-    private readonly List<CancellationTokenSource> _retiredRequestCancellations = [];
     private readonly PlaybackTimeline _timeline = new();
 
     private PlaybackOptions _options;
     private DecodeRequest _decodeRequest;
-    private CancellationTokenSource _requestCancellation;
+    private DecodeRequest? _activeDecodeRequest;
     private FFmpegMediaInfo? _mediaInfo;
     private Exception? _decodeFault;
     private TimeSpan _latestMediaTime;
@@ -57,12 +56,10 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             : nint.Zero;
         _usesLinearColorspace = context.UsesLinearColorspace;
         _options = source.Options;
-        _requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            _lifetimeCancellation.Token);
         var initialPosition = InitialPosition(_options);
         _decodeRequest = CreateRequestLocked(_options, initialPosition);
         _timeline.Reset(initialPosition.TotalSeconds);
-        _worker = Task.Run(WorkerLoop);
+        _worker = Task.Run(WorkerLoopAsync);
         SignalWorker();
     }
 
@@ -180,7 +177,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 return;
 
             _disposed = true;
-            _requestCancellation.Cancel();
+            _decodeRequest.Cancellation.Cancel();
             _lifetimeCancellation.Cancel();
             _frames.Writer.TryComplete();
         }
@@ -199,16 +196,14 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         finally
         {
             DrainQueuedFrames();
-            _requestCancellation.Dispose();
-            foreach (var cancellation in _retiredRequestCancellations)
-                cancellation.Dispose();
+            _decodeRequest.Cancellation.Dispose();
             _requestSignal.Dispose();
             _lifetimeCancellation.Dispose();
             _source.SessionDisposed(this);
         }
     }
 
-    private void WorkerLoop()
+    private async Task WorkerLoopAsync()
     {
         var processedGeneration = -1L;
 
@@ -216,29 +211,34 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         {
             DecodeRequest request;
             lock (_syncRoot)
+            {
                 request = _decodeRequest;
+                if (request.Generation != processedGeneration)
+                    _activeDecodeRequest = request;
+            }
 
             if (request.Generation == processedGeneration)
             {
-                _requestSignal.Wait(_lifetimeCancellation.Token);
+                await _requestSignal.WaitAsync(_lifetimeCancellation.Token).ConfigureAwait(false);
                 continue;
             }
 
             processedGeneration = request.Generation;
-            if (string.IsNullOrWhiteSpace(request.Filename))
-            {
-                PublishWorkerState(
-                    opening: false,
-                    endOfStream: false,
-                    fault: null,
-                    mediaInfo: null,
-                    message: "Set Filename to open media with FFmpeg.");
-                continue;
-            }
-
             try
             {
-                RunDecodeRequest(request);
+                if (string.IsNullOrWhiteSpace(request.Filename))
+                {
+                    PublishWorkerState(
+                        opening: false,
+                        endOfStream: false,
+                        fault: null,
+                        mediaInfo: null,
+                        message: "Set Filename to open media with FFmpeg.");
+                }
+                else
+                {
+                    RunDecodeRequest(request);
+                }
             }
             catch (OperationCanceledException) when (
                 request.Cancellation.IsCancellationRequested
@@ -259,6 +259,10 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                     fault: exception,
                     mediaInfo: null,
                     message: exception.Message);
+            }
+            finally
+            {
+                CompleteDecodeRequest(request);
             }
         }
     }
@@ -287,7 +291,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 using var decoder = new FFmpegVideoDecoder(
                     request.Filename,
                     initialPosition,
-                    request.Cancellation,
+                    request.Cancellation.Token,
                     decodeMode: effectiveMode,
                     graphicsDevice: _graphicsDevice,
                     graphicsDeviceType: _graphicsDeviceType,
@@ -311,7 +315,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 var producerStarted = Stopwatch.GetTimestamp();
                 decoder.Decode(decodedFrame =>
                 {
-                    request.Cancellation.ThrowIfCancellationRequested();
+                    request.Cancellation.Token.ThrowIfCancellationRequested();
                     request.Health.ObserveProducerDuration(
                         Stopwatch.GetElapsedTime(producerStarted));
 
@@ -327,7 +331,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                         Frame: decodedFrame);
                     var written = WriteFrame(
                         queued,
-                        request.Cancellation,
+                        request.Cancellation.Token,
                         request.Health);
                     producerStarted = Stopwatch.GetTimestamp();
                     return written;
@@ -354,7 +358,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                 continue;
             }
 
-            request.Cancellation.ThrowIfCancellationRequested();
+            request.Cancellation.Token.ThrowIfCancellationRequested();
 
             PlaybackOptions currentOptions;
             lock (_syncRoot)
@@ -502,10 +506,10 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
 
     private void ResetDecodeRequestLocked(PlaybackOptions options, TimeSpan initialPosition)
     {
-        _requestCancellation.Cancel();
-        _retiredRequestCancellations.Add(_requestCancellation);
-        _requestCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            _lifetimeCancellation.Token);
+        var retiredRequest = _decodeRequest;
+        retiredRequest.Cancellation.Cancel();
+        if (!ReferenceEquals(_activeDecodeRequest, retiredRequest))
+            retiredRequest.Cancellation.Dispose();
         _decodeRequest = CreateRequestLocked(options, initialPosition);
 
         DrainQueuedFrames();
@@ -531,8 +535,21 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             Filename: options.Filename,
             InitialPosition: initialPosition,
             DecodeMode: options.DecodeMode,
-            Cancellation: _requestCancellation.Token,
+            Cancellation: CancellationTokenSource.CreateLinkedTokenSource(_lifetimeCancellation.Token),
             Health: new PlaybackHealthTracker());
+
+    private void CompleteDecodeRequest(DecodeRequest request)
+    {
+        CancellationTokenSource? cancellation = null;
+        lock (_syncRoot)
+        {
+            if (ReferenceEquals(_activeDecodeRequest, request))
+                _activeDecodeRequest = null;
+            if (!ReferenceEquals(_decodeRequest, request))
+                cancellation = request.Cancellation;
+        }
+        cancellation?.Dispose();
+    }
 
     private long CurrentRequestGeneration()
     {
@@ -596,7 +613,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         string Filename,
         TimeSpan InitialPosition,
         DecodeMode DecodeMode,
-        CancellationToken Cancellation,
+        CancellationTokenSource Cancellation,
         PlaybackHealthTracker Health);
 
     private sealed record QueuedFrame(

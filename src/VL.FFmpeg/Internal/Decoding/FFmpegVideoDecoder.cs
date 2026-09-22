@@ -341,13 +341,15 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 
             try
             {
-                var frame = ConvertFrame(_frame);
-                _decodedFrameCount++;
-                if (frame.Timecode + TimeSpan.FromMilliseconds(1) < _minimumTimecode)
+                var timecode = ReadTimecode(_frame);
+                if (timecode + TimeSpan.FromMilliseconds(1) < _minimumTimecode)
                 {
-                    frame.Dispose();
+                    _decodedFrameCount++;
                     continue;
                 }
+
+                var frame = ConvertFrame(_frame);
+                _decodedFrameCount++;
                 if (!acceptFrame(frame))
                     return false;
             }
