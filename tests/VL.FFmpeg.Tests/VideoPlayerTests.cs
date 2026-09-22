@@ -110,7 +110,8 @@ public sealed class VideoPlayerTests
                 out var position,
                 out var duration,
                 out var phase,
-                out var decodePath);
+                out var decodePath,
+                out var status);
 
             using (Assert.EnterMultipleScope())
             {
@@ -122,6 +123,12 @@ public sealed class VideoPlayerTests
                 Assert.That(position, Is.GreaterThanOrEqualTo(0d));
                 Assert.That(phase, Is.EqualTo(PlaybackPhase.Playing));
                 Assert.That(decodePath, Is.EqualTo(DecodePath.Software));
+                Assert.That(status, Does.Contain("Buffer "));
+                Assert.That(status, Does.Contain("empty "));
+                Assert.That(status, Does.Contain("late "));
+                Assert.That(status, Does.Contain("dropped "));
+                Assert.That(status, Does.Contain("max empty/late "));
+                Assert.That(status, Does.Contain("max producer/queue wait "));
             }
         }
         finally
@@ -393,7 +400,7 @@ public sealed class VideoPlayerTests
     }
 
     private static void Update(VideoPlayer source, string filename, bool play)
-        => Update(source, filename, play, out _, out _, out _, out _);
+        => Update(source, filename, play, out _, out _, out _, out _, out _);
 
     private static void Update(
         VideoPlayer source,
@@ -402,7 +409,8 @@ public sealed class VideoPlayerTests
         out double position,
         out double duration,
         out PlaybackPhase phase,
-        out DecodePath decodePath)
+        out DecodePath decodePath,
+        out string status)
     {
         source.Update(
             out _,
@@ -415,7 +423,7 @@ public sealed class VideoPlayerTests
             out _,
             out phase,
             out decodePath,
-            out _,
+            out status,
             filename: filename,
             play: play);
     }

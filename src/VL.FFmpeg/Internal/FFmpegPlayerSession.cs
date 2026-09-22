@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
 using VL.FFmpeg.Internal.Decoding;
@@ -78,6 +79,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             var clockSeconds = _context.FrameClock.Time.Seconds;
             var targetTimeline = _timeline.Update(clockSeconds, _options.Play);
             var drainedFrames = 0;
+            double? presentedTimelineSeconds = null;
             DecodedVideoFrame? selectedFrame = null;
 
             while (_frames.Reader.TryPeek(out var queued)
@@ -94,6 +96,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
 
                 selectedFrame?.Dispose();
                 selectedFrame = queued.Frame;
+                presentedTimelineSeconds = queued.TimelineSeconds;
                 _latestMediaTime = queued.MediaTime;
                 drainedFrames++;
             }
@@ -110,7 +113,21 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             {
                 result = null;
             }
-            status = BuildStatusLocked(drainedFrames > 1);
+
+            var health = _decodeRequest.Health.Observe(
+                clockSeconds,
+                targetTimeline,
+                presentedTimelineSeconds,
+                _frames.Reader.Count,
+                FrameDuration(_mediaInfo),
+                drainedFrames,
+                active: _options.Play
+                && _mediaInfo is not null
+                && !_opening
+                && !_endOfStream
+                && _decodeFault is null
+                && _hasPresentedFrame);
+            status = BuildStatusLocked(drainedFrames > 1, health);
         }
 
         _source.PublishStatus(this, status);
@@ -291,9 +308,12 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                     mediaInfo: mediaInfo,
                     message: Describe(mediaInfo, _decodeStatus));
 
+                var producerStarted = Stopwatch.GetTimestamp();
                 decoder.Decode(decodedFrame =>
                 {
                     request.Cancellation.ThrowIfCancellationRequested();
+                    request.Health.ObserveProducerDuration(
+                        Stopwatch.GetElapsedTime(producerStarted));
 
                     if (fallbackReason is not null)
                         decodedFrame.DecodeStatus += $"; hardware fallback: {fallbackReason}";
@@ -305,7 +325,12 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                         TimelineSeconds: timeline,
                         MediaTime: decodedFrame.Timecode,
                         Frame: decodedFrame);
-                    return WriteFrame(queued, request.Cancellation);
+                    var written = WriteFrame(
+                        queued,
+                        request.Cancellation,
+                        request.Health);
+                    producerStarted = Stopwatch.GetTimestamp();
+                    return written;
                 });
             }
             catch (FFmpegHardwareException exception) when (
@@ -358,9 +383,13 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         }
     }
 
-    private bool WriteFrame(QueuedFrame frame, CancellationToken cancellationToken)
+    private bool WriteFrame(
+        QueuedFrame frame,
+        CancellationToken cancellationToken,
+        PlaybackHealthTracker health)
     {
         var written = false;
+        long? waitStarted = null;
         try
         {
             while (!cancellationToken.IsCancellationRequested)
@@ -371,6 +400,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
                     return true;
                 }
 
+                waitStarted ??= Stopwatch.GetTimestamp();
                 if (!_frames.Writer.WaitToWriteAsync(cancellationToken).AsTask().GetAwaiter().GetResult())
                     return false;
             }
@@ -379,12 +409,16 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         }
         finally
         {
+            if (waitStarted is { } started)
+                health.ObserveQueueWaitDuration(Stopwatch.GetElapsedTime(started));
             if (!written)
                 frame.Frame.Dispose();
         }
     }
 
-    private PlaybackStatus BuildStatusLocked(bool playbackOverload)
+    private PlaybackStatus BuildStatusLocked(
+        bool playbackOverload,
+        PlaybackHealthSnapshot health)
     {
         if (_decodeFault is not null)
         {
@@ -425,7 +459,7 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             IsPlaying: _options.Play && !ended && _hasPresentedFrame,
             IsEnded: ended,
             PlaybackOverload: playbackOverload,
-            Message: Describe(_mediaInfo, _decodeStatus));
+            Message: DescribeWithDiagnostics(_mediaInfo, health));
     }
 
     private void PublishWorkerState(
@@ -497,7 +531,8 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
             Filename: options.Filename,
             InitialPosition: initialPosition,
             DecodeMode: options.DecodeMode,
-            Cancellation: _requestCancellation.Token);
+            Cancellation: _requestCancellation.Token,
+            Health: new PlaybackHealthTracker());
 
     private long CurrentRequestGeneration()
     {
@@ -512,6 +547,26 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
 
     private static string Describe(FFmpegMediaInfo mediaInfo, string decodeStatus)
         => $"{mediaInfo.VideoCodec}, {mediaInfo.Width}x{mediaInfo.Height}, {decodeStatus}.";
+
+    private static double FrameDuration(FFmpegMediaInfo? mediaInfo)
+        => mediaInfo?.FrameRate.N > 0
+            ? mediaInfo.FrameRate.D / (double)mediaInfo.FrameRate.N
+            : 0d;
+
+    private string DescribeWithDiagnostics(
+        FFmpegMediaInfo mediaInfo,
+        PlaybackHealthSnapshot health)
+        => $"{Describe(mediaInfo, _decodeStatus)} "
+            + $"Buffer {health.QueueDepth}/{QueueCapacity}; "
+            + $"empty {health.QueueEmptyEvents}; "
+            + $"late {health.PresentationUnderruns}; "
+            + $"dropped {health.DroppedFrames}; "
+            + $"max empty/late "
+            + $"{health.MaxQueueEmptyDuration.TotalMilliseconds:F1}/"
+            + $"{health.MaxPresentationLateness.TotalMilliseconds:F1} ms; "
+            + $"max producer/queue wait "
+            + $"{health.MaxProducerDuration.TotalMilliseconds:F1}/"
+            + $"{health.MaxQueueWaitDuration.TotalMilliseconds:F1} ms.";
 
     private void DrainQueuedFrames()
     {
@@ -541,7 +596,8 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
         string Filename,
         TimeSpan InitialPosition,
         DecodeMode DecodeMode,
-        CancellationToken Cancellation);
+        CancellationToken Cancellation,
+        PlaybackHealthTracker Health);
 
     private sealed record QueuedFrame(
         long RequestGeneration,
