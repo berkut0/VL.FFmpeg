@@ -24,6 +24,17 @@ internal readonly record struct VideoColorInfo(
     string TransferName,
     bool TransferAssumed)
 {
+    private static readonly Lazy<ushort[]> Bt709LinearLookup = new(
+        () => BuildLinearLookup(VideoTransferFunction.Bt709));
+    private static readonly Lazy<ushort[]> SrgbLinearLookup = new(
+        () => BuildLinearLookup(VideoTransferFunction.Srgb));
+    private static readonly Lazy<ushort[]> Gamma22LinearLookup = new(
+        () => BuildLinearLookup(VideoTransferFunction.Gamma22));
+    private static readonly Lazy<ushort[]> Gamma28LinearLookup = new(
+        () => BuildLinearLookup(VideoTransferFunction.Gamma28));
+    private static readonly Lazy<ushort[]> LinearLookup = new(
+        () => BuildLinearLookup(VideoTransferFunction.Linear));
+
     public string Description
         => $"{MatrixName} {(FullRange ? "full" : "limited")}{Assumptions}";
 
@@ -113,22 +124,41 @@ internal readonly record struct VideoColorInfo(
         if (Transfer == VideoTransferFunction.Unsupported)
             throw new NotSupportedException($"Unsupported video transfer characteristic: {TransferName}.");
 
+        var lookup = GetLinearLookup();
         var values = MemoryMarshal.Cast<byte, ushort>(rgba);
         for (var index = 0; index < values.Length; index += 4)
         {
-            var red = values[index] / 65535f;
-            var green = values[index + 1] / 65535f;
-            var blue = values[index + 2] / 65535f;
             var alpha = values[index + 3] / 65535f;
-            values[index] = BitConverter.HalfToUInt16Bits((Half)ToLinear(red));
-            values[index + 1] = BitConverter.HalfToUInt16Bits((Half)ToLinear(green));
-            values[index + 2] = BitConverter.HalfToUInt16Bits((Half)ToLinear(blue));
+            values[index] = lookup[values[index]];
+            values[index + 1] = lookup[values[index + 1]];
+            values[index + 2] = lookup[values[index + 2]];
             values[index + 3] = BitConverter.HalfToUInt16Bits((Half)alpha);
         }
     }
 
-    private float ToLinear(float value)
+    private ushort[] GetLinearLookup()
         => Transfer switch
+        {
+            VideoTransferFunction.Linear => LinearLookup.Value,
+            VideoTransferFunction.Srgb => SrgbLinearLookup.Value,
+            VideoTransferFunction.Gamma22 => Gamma22LinearLookup.Value,
+            VideoTransferFunction.Gamma28 => Gamma28LinearLookup.Value,
+            _ => Bt709LinearLookup.Value
+        };
+
+    private static ushort[] BuildLinearLookup(VideoTransferFunction transfer)
+    {
+        var lookup = new ushort[ushort.MaxValue + 1];
+        for (var value = 0; value < lookup.Length; value++)
+        {
+            var normalized = value / 65535f;
+            lookup[value] = BitConverter.HalfToUInt16Bits((Half)ToLinear(normalized, transfer));
+        }
+        return lookup;
+    }
+
+    private static float ToLinear(float value, VideoTransferFunction transfer)
+        => transfer switch
         {
             VideoTransferFunction.Linear => value,
             VideoTransferFunction.Srgb => value <= 0.04045f

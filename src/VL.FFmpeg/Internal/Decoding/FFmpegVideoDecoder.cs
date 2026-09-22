@@ -22,6 +22,10 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     private readonly GraphicsDeviceType _graphicsDeviceType;
     private readonly bool _usesLinearColorspace;
     private readonly AVCodecContext_get_format _getFormatCallback;
+    private readonly byte*[] _sourceData = new byte*[8];
+    private readonly int[] _sourceLines = new int[8];
+    private readonly byte*[] _destinationData = new byte*[8];
+    private readonly int[] _destinationLines = new int[8];
     private AVFormatContext* _formatContext;
     private AVCodecContext* _codecContext;
     private AVPacket* _packet;
@@ -476,22 +480,26 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         }
 
         var stride = checked(frame->width * (_usesLinearColorspace ? 8 : 4));
-        var pixels = new byte[checked(stride * frame->height)];
+        var pixels = GC.AllocateUninitializedArray<byte>(checked(stride * frame->height));
         fixed (byte* destination = pixels)
         {
-            var destinationData = new byte*[8];
-            destinationData[0] = destination;
-            var destinationLines = new int[8];
-            destinationLines[0] = stride;
+            for (var index = 0; index < 8; index++)
+            {
+                _sourceData[index] = frame->data[(uint)index];
+                _sourceLines[index] = frame->linesize[(uint)index];
+            }
+
+            _destinationData[0] = destination;
+            _destinationLines[0] = stride;
 
             var scaledHeight = ffmpeg.sws_scale(
                 _swsContext,
-                frame->data.ToArray(),
-                frame->linesize.ToArray(),
+                _sourceData,
+                _sourceLines,
                 0,
                 frame->height,
-                destinationData,
-                destinationLines);
+                _destinationData,
+                _destinationLines);
             if (scaledHeight != frame->height)
             {
                 if (scaledHeight < 0)
