@@ -6,11 +6,13 @@ namespace VL.FFmpeg.Internal.Decoding;
 
 internal unsafe sealed class FFmpegAudioDecoder : IDisposable
 {
-    private readonly CancellationToken _cancellationToken;
-    private readonly AVIOInterruptCB_callback _interruptCallback;
-    private readonly int _requestedSampleRate;
-    private readonly int _requestedChannelCount;
-    private readonly TimeSpan _minimumTimecode;
+    private CancellationToken _cancellationToken;
+    private FFmpegDemuxContext? _demux;
+    private bool _ownsDemux;
+    private double? _nextOutputTime;
+    private int _requestedSampleRate;
+    private int _requestedChannelCount;
+    private TimeSpan _minimumTimecode;
     private AVFormatContext* _formatContext;
     private AVCodecContext* _codecContext;
     private AVPacket* _packet;
@@ -30,7 +32,8 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
         int sampleRate,
         int channelCount,
         CancellationToken cancellationToken,
-        string? nativeRuntimePath = null)
+        string? nativeRuntimePath = null,
+        FFmpegDemuxContext? demux = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filename);
         if (initialPosition < TimeSpan.Zero)
@@ -41,10 +44,11 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
             throw new ArgumentOutOfRangeException(nameof(channelCount));
 
         _cancellationToken = cancellationToken;
-        _interruptCallback = Interrupt;
         _requestedSampleRate = sampleRate;
         _requestedChannelCount = channelCount;
         _minimumTimecode = initialPosition;
+        _demux = demux;
+        _ownsDemux = demux is null;
 
         try
         {
@@ -138,13 +142,8 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
             ffmpeg.avcodec_free_context(&codecContext);
             _codecContext = codecContext;
         }
-        if (_formatContext is not null)
-        {
-            var formatContext = _formatContext;
-            ffmpeg.avformat_close_input(&formatContext);
-            _formatContext = formatContext;
-        }
-        GC.KeepAlive(_interruptCallback);
+        if (_ownsDemux) _demux?.Dispose();
+        _formatContext = null;
     }
 
     private bool ReceiveFrames(Func<DecodedAudioFrame, bool> acceptFrame)
@@ -204,7 +203,8 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
         if (converted == 0)
             return null;
 
-        var timecode = ReadTimecode(frame);
+        var timecode = TimeSpan.FromSeconds(_nextOutputTime ?? ReadTimecode(frame).TotalSeconds);
+        _nextOutputTime = timecode.TotalSeconds + converted / (double)OutputSampleRate;
         _decodedSampleCount += converted;
         var sampleOffset = 0;
         if (timecode < _minimumTimecode)
@@ -296,7 +296,7 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
         }
         if (result < 0 && result != Again && result != ffmpeg.AVERROR_EOF)
             Throw(result, "drain the audio decoder");
-        return ReceiveFrames(acceptFrame);
+        return ReceiveFrames(acceptFrame) && FlushResampler(acceptFrame);
     }
 
     private TimeSpan ReadTimecode(AVFrame* frame)
@@ -307,35 +307,78 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
         if (timestamp == ffmpeg.AV_NOPTS_VALUE)
             return TimeSpan.FromSeconds(_decodedSampleCount / (double)OutputSampleRate);
 
-        var streamStart = _audioStream->start_time == ffmpeg.AV_NOPTS_VALUE
-            ? 0L
-            : _audioStream->start_time;
-        var seconds = (timestamp - streamStart) * ToDouble(_audioStream->time_base);
+        var seconds = timestamp * ToDouble(_audioStream->time_base) - _demux!.OriginSeconds;
         return TimeSpan.FromSeconds(Math.Max(0d, seconds));
     }
 
-    private void Seek(TimeSpan position)
+    public int StreamIndex => _audioStreamIndex;
+    public int SendPacket(AVPacket* packet) => ffmpeg.avcodec_send_packet(_codecContext, packet);
+    public DecodedAudioFrame? Receive()
     {
-        var timeBase = ToDouble(_audioStream->time_base);
-        if (timeBase <= 0d)
-            throw new NotSupportedException("The audio stream has no usable time base for seeking.");
-        var streamStart = _audioStream->start_time == ffmpeg.AV_NOPTS_VALUE
-            ? 0L
-            : _audioStream->start_time;
-        var target = checked(streamStart + (long)Math.Round(position.TotalSeconds / timeBase));
-        Check(
-            ffmpeg.av_seek_frame(
-                _formatContext,
-                _audioStreamIndex,
-                target,
-                ffmpeg.AVSEEK_FLAG_BACKWARD),
-            $"seek audio to {position.TotalSeconds:0.###} seconds");
-        ffmpeg.avcodec_flush_buffers(_codecContext);
-        _decodedSampleCount = checked((long)Math.Round(position.TotalSeconds * OutputSampleRate));
+        while (true)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            var result = ffmpeg.avcodec_receive_frame(_codecContext, _frame);
+            if (result == Again || result == ffmpeg.AVERROR_EOF) return null;
+            Check(result, "receive audio frame");
+            try
+            {
+                var frame = ConvertFrame(_frame);
+                if (frame is not null) return frame;
+            }
+            finally { ffmpeg.av_frame_unref(_frame); }
+        }
     }
 
-    private int Interrupt(void* _)
-        => _cancellationToken.IsCancellationRequested ? 1 : 0;
+    public void Flush(TimeSpan position, int rate, int channels, CancellationToken token)
+    {
+        var outputChanged = _requestedSampleRate != rate || _requestedChannelCount != channels;
+        _cancellationToken = token;
+        _requestedSampleRate = rate;
+        _requestedChannelCount = channels;
+        _minimumTimecode = position;
+        _nextOutputTime = null;
+        _decodedSampleCount = (long)(position.TotalSeconds * rate);
+        ffmpeg.avcodec_flush_buffers(_codecContext);
+        if (_swrContext is not null)
+        {
+            if (outputChanged)
+            {
+                var context = _swrContext;
+                ffmpeg.swr_free(&context);
+                _swrContext = null;
+            }
+            else
+            {
+                ffmpeg.swr_close(_swrContext);
+                Check(ffmpeg.swr_init(_swrContext), "reset audio resampler");
+            }
+        }
+    }
+
+    public bool FlushResampler(Func<DecodedAudioFrame, bool> accept)
+    {
+        if (_swrContext is null) return true;
+        var planes = stackalloc byte*[OutputChannelCount];
+        while (true)
+        {
+            _cancellationToken.ThrowIfCancellationRequested();
+            var capacity = Math.Max(1, ffmpeg.swr_get_out_samples(_swrContext, 0));
+            var samples = new float[checked(capacity * OutputChannelCount)];
+            int count;
+            fixed (float* p = samples)
+            {
+                for (var c = 0; c < OutputChannelCount; c++) planes[c] = (byte*)(p + c * capacity);
+                count = ffmpeg.swr_convert(_swrContext, planes, capacity, null, 0);
+            }
+            Check(count, "flush audio resampler");
+            if (count == 0) return true;
+            var time = _nextOutputTime ?? 0;
+            _nextOutputTime = time + count / (double)OutputSampleRate;
+            if (!accept(new DecodedAudioFrame(samples, OutputChannelCount, count, 0, OutputSampleRate, TimeSpan.FromSeconds(time))))
+                return false;
+        }
+    }
 
     private static TimeSpan ReadDuration(AVFormatContext* formatContext, AVStream* stream)
     {
@@ -373,30 +416,8 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
         TimeSpan initialPosition,
         string? nativeRuntimePath)
     {
-        var runtime = FFmpegRuntime.Probe(nativeRuntimePath);
-        if (!runtime.Available)
-            throw new InvalidOperationException(runtime.Status);
-
-        _cancellationToken.ThrowIfCancellationRequested();
-        _formatContext = ffmpeg.avformat_alloc_context();
-        if (_formatContext is null)
-            throw new OutOfMemoryException("FFmpeg could not allocate an audio AVFormatContext.");
-        _formatContext->interrupt_callback = new AVIOInterruptCB
-        {
-            callback = _interruptCallback,
-            opaque = null
-        };
-
-        var formatContext = _formatContext;
-        var openResult = ffmpeg.avformat_open_input(&formatContext, filename, null, null);
-        _formatContext = formatContext;
-        if (openResult < 0)
-        {
-            _cancellationToken.ThrowIfCancellationRequested();
-            Throw(openResult, $"open '{filename}' for audio");
-        }
-
-        Check(ffmpeg.avformat_find_stream_info(_formatContext, null), "inspect audio stream information");
+        _demux ??= new FFmpegDemuxContext(filename, _cancellationToken, nativeRuntimePath);
+        _formatContext = _demux.Context;
         AVCodec* decoder = null;
         _audioStreamIndex = ffmpeg.av_find_best_stream(
             _formatContext,
@@ -430,8 +451,8 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
 
         var parameters = _audioStream->codecpar;
         var duration = ReadDuration(_formatContext, _audioStream);
-        if (initialPosition > TimeSpan.Zero)
-            Seek(initialPosition);
+        if (initialPosition > TimeSpan.Zero && _ownsDemux)
+            _demux!.Seek(initialPosition);
 
         return new FFmpegAudioMediaInfo(
             Duration: duration,

@@ -43,6 +43,7 @@ internal sealed class CpuDecodedVideoFrame : DecodedVideoFrame
 {
     private byte[]? _pixels;
     private readonly bool _linear;
+    private CpuFrameLease? _lease;
 
     public CpuDecodedVideoFrame(
         byte[] pixels,
@@ -51,24 +52,36 @@ internal sealed class CpuDecodedVideoFrame : DecodedVideoFrame
         TimeSpan timecode,
         (int N, int D) frameRate,
         string decodeStatus,
-        bool linear)
+        bool linear,
+        CpuFrameLease? lease = null)
         : base(width, height, timecode, frameRate, DecodePath.Software, decodeStatus)
     {
         _pixels = pixels;
         _linear = linear;
+        _lease = lease;
     }
 
     public override IResourceProvider<VideoFrame> CreateProvider()
     {
         var pixels = Interlocked.Exchange(ref _pixels, null)
             ?? throw new InvalidOperationException("The decoded CPU frame was already consumed.");
-        VideoFrame frame = _linear
-            ? new ManagedRgba16fVideoFrame(pixels, Width, Height, Timecode, FrameRate, DecodeStatus)
-            : new ManagedBgraVideoFrame(pixels, Width, Height, Timecode, FrameRate, DecodeStatus);
-        return ResourceProvider.Return(frame);
+        var lease = Interlocked.Exchange(ref _lease, null);
+        try
+        {
+            VideoFrame frame = _linear
+                ? new ManagedRgba16fVideoFrame(pixels, Width, Height, Timecode, FrameRate, DecodeStatus)
+                : new ManagedBgraVideoFrame(pixels, Width, Height, Timecode, FrameRate, DecodeStatus);
+            return lease is null ? ResourceProvider.Return(frame)
+                : ResourceProvider.Return(frame, lease, static value => value.Dispose());
+        }
+        catch { lease?.Dispose(); throw; }
     }
 
-    public override void Dispose() => _pixels = null;
+    public override void Dispose()
+    {
+        _pixels = null;
+        Interlocked.Exchange(ref _lease, null)?.Dispose();
+    }
 }
 
 internal sealed class GpuDecodedVideoFrame : DecodedVideoFrame

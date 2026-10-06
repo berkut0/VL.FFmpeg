@@ -1,5 +1,7 @@
 # CPU frame-allocation design
 
+> Superseded by the leased CPU frame pool in [the active architecture](../../ARCHITECTURE.md).
+
 ## Goal
 
 Remove needless managed work from the software CPU video conversion path without

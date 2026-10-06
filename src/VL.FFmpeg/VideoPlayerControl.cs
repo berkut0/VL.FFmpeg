@@ -29,7 +29,7 @@ public sealed class VideoPlayerControl
     /// <summary>Whether the active media stream reached its end.</summary>
     public bool IsEnded => _source.Status.IsEnded;
 
-    /// <summary>Whether presentation skipped more than one queued frame.</summary>
+    /// <summary>Whether presentation is late, skips queued frames, or waits for buffer resources.</summary>
     public bool PlaybackOverload => _source.Status.PlaybackOverload;
 
     /// <summary>Whether looping is requested.</summary>

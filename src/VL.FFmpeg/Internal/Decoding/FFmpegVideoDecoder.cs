@@ -7,7 +7,7 @@ using VL.Lib.Basics.Video;
 namespace VL.FFmpeg.Internal.Decoding;
 
 /// <summary>
-/// Owns one libavformat/libavcodec video decode pipeline.
+/// Owns one video codec and its reusable converter; the playback session supplies the container.
 /// </summary>
 /// <remarks>
 /// This type deliberately has no playback clock or renderer knowledge. It is a
@@ -15,27 +15,20 @@ namespace VL.FFmpeg.Internal.Decoding;
 /// </remarks>
 internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 {
-    private readonly CancellationToken _cancellationToken;
-    private readonly AVIOInterruptCB_callback _interruptCallback;
+    private CancellationToken _cancellationToken;
+    private FFmpegDemuxContext? _demux;
+    private readonly VideoFrameConverter _converter;
+    private bool _ownsDemux;
     private readonly DecodeMode _decodeMode;
     private readonly nint _graphicsDevice;
     private readonly GraphicsDeviceType _graphicsDeviceType;
     private readonly bool _usesLinearColorspace;
     private readonly AVCodecContext_get_format _getFormatCallback;
-    private readonly byte*[] _sourceData = new byte*[8];
-    private readonly int[] _sourceLines = new int[8];
-    private readonly byte*[] _destinationData = new byte*[8];
-    private readonly int[] _destinationLines = new int[8];
     private AVFormatContext* _formatContext;
     private AVCodecContext* _codecContext;
     private AVPacket* _packet;
     private AVFrame* _frame;
-    private SwsContext* _swsContext;
     private AVBufferRef* _hardwareDeviceReference;
-    private D3D11TexturePool? _texturePool;
-    private SoftwareD3D11FrameConverter? _softwareGpuConverter;
-    private string? _softwareGpuUnavailableReason;
-    private string? _softwareGpuFrameStatus;
     private AVStream* _videoStream;
     private int _videoStreamIndex = -1;
     private bool _sourceDeclaresAlpha;
@@ -46,6 +39,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     private bool _hardwareFormatOffered;
     private bool _hardwareFormatSelected;
     private bool _disposed;
+    private int _threadCount;
+    public int ThreadCount => _threadCount;
+    public int DelayFrames => Math.Max(_codecContext->delay, _codecContext->has_b_frames) + Math.Max(0, _threadCount - 1);
 
     public FFmpegVideoDecoder(
         string filename,
@@ -55,20 +51,23 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         DecodeMode decodeMode = DecodeMode.Software,
         nint graphicsDevice = default,
         GraphicsDeviceType graphicsDeviceType = GraphicsDeviceType.None,
-        bool usesLinearColorspace = false)
+        bool usesLinearColorspace = false,
+        FFmpegDemuxContext? demux = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(filename);
         if (initialPosition < TimeSpan.Zero)
             throw new ArgumentOutOfRangeException(nameof(initialPosition));
 
         _cancellationToken = cancellationToken;
-        _interruptCallback = Interrupt;
         _getFormatCallback = SelectPixelFormat;
         _decodeMode = decodeMode;
         _graphicsDevice = graphicsDevice;
         _graphicsDeviceType = graphicsDeviceType;
         _usesLinearColorspace = usesLinearColorspace;
+        _converter = new VideoFrameConverter(graphicsDevice, graphicsDeviceType, usesLinearColorspace, decodeMode);
         _minimumTimecode = initialPosition;
+        _demux = demux;
+        _ownsDemux = demux is null;
 
         try
         {
@@ -83,7 +82,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 
     public FFmpegMediaInfo MediaInfo { get; }
 
-    public string DecodeStatus => _decodeStatus;
+    public string DecodeStatus => _converter.Status ?? _decodeStatus;
 
     public bool HardwareConfigured => _hardwareConfigured;
 
@@ -145,18 +144,8 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             return;
 
         _disposed = true;
-
-        if (_swsContext is not null)
-        {
-            ffmpeg.sws_freeContext(_swsContext);
-            _swsContext = null;
-        }
-
-        _texturePool?.Dispose();
-        _texturePool = null;
-
-        _softwareGpuConverter?.Dispose();
-        _softwareGpuConverter = null;
+        if (_threadCount > 0) { PlaybackWork.UnregisterDecoder(); _threadCount = 0; }
+        _converter.Dispose();
 
         if (_frame is not null)
         {
@@ -186,15 +175,10 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _hardwareDeviceReference = hardwareDeviceReference;
         }
 
-        if (_formatContext is not null)
-        {
-            var formatContext = _formatContext;
-            ffmpeg.avformat_close_input(&formatContext);
-            _formatContext = formatContext;
-        }
+        if (_ownsDemux) _demux?.Dispose();
+        _formatContext = null;
 
-        // The native AVIOInterruptCB stores only a function pointer.
-        GC.KeepAlive(_interruptCallback);
+        // The codec stores the pixel-format callback as a native function pointer.
         GC.KeepAlive(_getFormatCallback);
     }
 
@@ -203,36 +187,8 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         TimeSpan initialPosition,
         string? nativeRuntimePath)
     {
-        var runtime = FFmpegRuntime.Probe(nativeRuntimePath);
-        if (!runtime.Available)
-            throw new InvalidOperationException(runtime.Status);
-
-        _cancellationToken.ThrowIfCancellationRequested();
-
-        _formatContext = ffmpeg.avformat_alloc_context();
-        if (_formatContext is null)
-            throw new OutOfMemoryException("FFmpeg could not allocate AVFormatContext.");
-
-        _formatContext->interrupt_callback = new AVIOInterruptCB
-        {
-            callback = _interruptCallback,
-            opaque = null
-        };
-
-        var formatContext = _formatContext;
-        var openResult = ffmpeg.avformat_open_input(
-            &formatContext,
-            filename,
-            null,
-            null);
-        _formatContext = formatContext;
-        if (openResult < 0)
-        {
-            _cancellationToken.ThrowIfCancellationRequested();
-            Throw(openResult, $"open '{filename}'");
-        }
-
-        Check(ffmpeg.avformat_find_stream_info(_formatContext, null), "inspect stream information");
+        _demux ??= new FFmpegDemuxContext(filename, _cancellationToken, nativeRuntimePath);
+        _formatContext = _demux.Context;
 
         AVCodec* decoder = null;
         _videoStreamIndex = ffmpeg.av_find_best_stream(
@@ -252,6 +208,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             throw new InvalidDataException("The selected FFmpeg video stream has no codec parameters.");
 
         _sourceDeclaresAlpha = SourceDeclaresAlpha(_videoStream);
+        _converter.DeclaresAlpha = _sourceDeclaresAlpha;
         decoder = SelectVideoDecoder(decoder);
 
         _codecContext = ffmpeg.avcodec_alloc_context3(decoder);
@@ -263,7 +220,11 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             "copy video codec parameters");
         // Auto threading can retain too many UHD software frames; eight keeps
         // decode parallel while bounding native frame memory.
-        _codecContext->thread_count = Math.Min(Environment.ProcessorCount, 8);
+        _threadCount = PlaybackWork.RegisterDecoder();
+        if ((decoder->capabilities & (ffmpeg.AV_CODEC_CAP_FRAME_THREADS
+            | ffmpeg.AV_CODEC_CAP_SLICE_THREADS | ffmpeg.AV_CODEC_CAP_OTHER_THREADS)) == 0)
+            _threadCount = 1;
+        _codecContext->thread_count = _threadCount;
         ConfigureHardwareDecoder();
         var codecOpenResult = ffmpeg.avcodec_open2(_codecContext, decoder, null);
         if (codecOpenResult < 0 && _hardwareConfigured)
@@ -285,8 +246,8 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         var duration = ReadDuration(_formatContext, _videoStream);
         var codecParameters = _videoStream->codecpar;
 
-        if (initialPosition > TimeSpan.Zero)
-            Seek(initialPosition);
+        if (initialPosition > TimeSpan.Zero && _ownsDemux)
+            _demux!.Seek(initialPosition);
 
         return new FFmpegMediaInfo(
             Width: codecParameters->width,
@@ -360,193 +321,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         }
     }
 
-    private DecodedVideoFrame ConvertFrame(AVFrame* frame)
-    {
-        if (frame->width <= 0 || frame->height <= 0)
-            throw new InvalidDataException("FFmpeg returned a video frame with invalid dimensions.");
-
-        var pixelFormat = (AVPixelFormat)frame->format;
-        if (pixelFormat == AVPixelFormat.AV_PIX_FMT_D3D11)
-        {
-            if (_texturePool is null)
-                throw new FFmpegHardwareException("D3D11VA selected without a GPU texture pool.");
-
-            var lease = _texturePool.Convert(
-                frame,
-                MediaInfo.FrameRate,
-                _cancellationToken,
-                out var hardwareStatus);
-            _decodeStatus = WithAlphaStatus(frame, hardwareStatus);
-            return new GpuDecodedVideoFrame(
-                lease,
-                ReadTimecode(frame),
-                MediaInfo.FrameRate,
-                _decodeStatus);
-        }
-
-        if (_decodeMode == DecodeMode.Hardware)
-        {
-            var reason = _hardwareFormatOffered
-                ? $"FFmpeg selected software pixel format {pixelFormat} instead of D3D11VA."
-                : "The selected codec did not offer AV_PIX_FMT_D3D11.";
-            throw new FFmpegHardwareException(reason);
-        }
-
-        var fallbackStatus = _hardwareConfigured && !_hardwareFormatSelected
-            ? $"Hardware fallback; D3D11VA was not selected ({pixelFormat}); "
-            : string.Empty;
-        var color = VideoColorInfo.Resolve(
-            frame->colorspace,
-            frame->color_range,
-            frame->color_trc,
-            frame->height);
-        if (_usesLinearColorspace && color.IsHdr)
-            throw new NotSupportedException("HDR tone mapping is not implemented for linear output.");
-
-        if (_graphicsDeviceType == GraphicsDeviceType.Direct3D11
-            && _graphicsDevice != nint.Zero
-            && _softwareGpuUnavailableReason is null)
-        {
-            try
-            {
-                _softwareGpuConverter ??= new SoftwareD3D11FrameConverter(
-                    _graphicsDevice,
-                    _usesLinearColorspace);
-                if (_softwareGpuConverter.TryConvert(
-                        frame,
-                        color,
-                        _cancellationToken,
-                        out var gpuLease,
-                        out var gpuStatus))
-                {
-                    if (!ReferenceEquals(_softwareGpuFrameStatus, gpuStatus))
-                    {
-                        _softwareGpuFrameStatus = gpuStatus;
-                        _decodeStatus = WithAlphaStatus(frame, fallbackStatus + gpuStatus);
-                    }
-                    return new GpuDecodedVideoFrame(
-                        gpuLease!,
-                        ReadTimecode(frame),
-                        MediaInfo.FrameRate,
-                        _decodeStatus,
-                        DecodePath.SoftwareGpuTexture);
-                }
-
-                _softwareGpuUnavailableReason = gpuStatus;
-                _softwareGpuConverter.Dispose();
-                _softwareGpuConverter = null;
-            }
-            catch (Exception exception) when (exception is not OperationCanceledException)
-            {
-                _softwareGpuUnavailableReason = exception.Message;
-                _softwareGpuConverter?.Dispose();
-                _softwareGpuConverter = null;
-            }
-        }
-
-        var outputPixelFormat = _usesLinearColorspace
-            ? AVPixelFormat.AV_PIX_FMT_RGBA64LE
-            : AVPixelFormat.AV_PIX_FMT_BGRA;
-        _swsContext = ffmpeg.sws_getCachedContext(
-            _swsContext,
-            frame->width,
-            frame->height,
-            pixelFormat,
-            frame->width,
-            frame->height,
-            outputPixelFormat,
-            (int)SwsFlags.SWS_BILINEAR,
-            null,
-            null,
-            null);
-        if (_swsContext is null)
-            throw new InvalidOperationException($"FFmpeg could not convert pixel format {pixelFormat} to BGRA.");
-
-        var pixelDescriptor = ffmpeg.av_pix_fmt_desc_get(pixelFormat);
-        var sourceIsRgb = pixelDescriptor is not null
-            && (pixelDescriptor->flags & (ulong)ffmpeg.AV_PIX_FMT_FLAG_RGB) != 0;
-        if (!sourceIsRgb)
-        {
-            var coefficients = *(int_array4*)ffmpeg.sws_getCoefficients(color.SwsColorSpace);
-            var colorspaceResult = ffmpeg.sws_setColorspaceDetails(
-                _swsContext,
-                in coefficients,
-                color.FullRange ? 1 : 0,
-                in coefficients,
-                dstRange: 1,
-                brightness: 0,
-                contrast: 1 << 16,
-                saturation: 1 << 16);
-            if (colorspaceResult < 0)
-                Throw(colorspaceResult, $"configure {color.Description} software color conversion");
-        }
-
-        var stride = checked(frame->width * (_usesLinearColorspace ? 8 : 4));
-        var pixels = GC.AllocateUninitializedArray<byte>(checked(stride * frame->height));
-        fixed (byte* destination = pixels)
-        {
-            for (var index = 0; index < 8; index++)
-            {
-                _sourceData[index] = frame->data[(uint)index];
-                _sourceLines[index] = frame->linesize[(uint)index];
-            }
-
-            _destinationData[0] = destination;
-            _destinationLines[0] = stride;
-
-            var scaledHeight = ffmpeg.sws_scale(
-                _swsContext,
-                _sourceData,
-                _sourceLines,
-                0,
-                frame->height,
-                _destinationData,
-                _destinationLines);
-            if (scaledHeight != frame->height)
-            {
-                if (scaledHeight < 0)
-                    Throw(scaledHeight, "convert a decoded frame to BGRA");
-                throw new InvalidDataException(
-                    $"FFmpeg converted {scaledHeight} rows; expected {frame->height}.");
-            }
-        }
-
-        var outputDescription = _usesLinearColorspace ? "linear RGBA16F" : "nonlinear BGRA8";
-        var softwareFallback = _softwareGpuUnavailableReason is null
-            ? string.Empty
-            : $"Software CPU fallback; {_softwareGpuUnavailableReason}; ";
-        var inputColorDescription = sourceIsRgb ? color.RgbDescription : color.Description;
-        _decodeStatus = $"{fallbackStatus}{softwareFallback}Software {inputColorDescription} -> {outputDescription}; transfer {color.TransferName}";
-        if (color.IsHdr)
-            _decodeStatus += "; HDR tone mapping is not implemented";
-        _decodeStatus = WithAlphaStatus(frame, _decodeStatus);
-        if (_usesLinearColorspace)
-            color.LinearizeRgba64(pixels);
-
-        return new CpuDecodedVideoFrame(
-            pixels: pixels,
-            width: frame->width,
-            height: frame->height,
-            timecode: ReadTimecode(frame),
-            frameRate: MediaInfo.FrameRate,
-            decodeStatus: _decodeStatus,
-            linear: _usesLinearColorspace);
-    }
-
-    private string WithAlphaStatus(AVFrame* frame, string status)
-    {
-        if (!_sourceDeclaresAlpha)
-            return status;
-
-        var descriptor = ffmpeg.av_pix_fmt_desc_get((AVPixelFormat)frame->format);
-        if (descriptor is not null
-            && (descriptor->flags & (ulong)ffmpeg.AV_PIX_FMT_FLAG_ALPHA) != 0)
-        {
-            return status;
-        }
-
-        return $"{status}; alpha declared but unavailable; output is opaque";
-    }
+    private DecodedVideoFrame ConvertFrame(AVFrame* frame, TimeSpan? explicitTimecode = null)
+        => _converter.Convert(frame, explicitTimecode ?? ReadTimecode(frame), MediaInfo.FrameRate,
+            _hardwareConfigured, _hardwareFormatSelected, _hardwareFormatOffered, _cancellationToken);
 
     private void ConfigureHardwareDecoder()
     {
@@ -594,7 +371,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _codecContext->get_format = _getFormatCallback;
             _codecContext->hw_device_ctx = codecReference;
             _codecContext->extra_hw_frames = 8;
-            _texturePool = new D3D11TexturePool(d3d11Context, _usesLinearColorspace);
+            _converter.ConfigureHardware(d3d11Context);
             _hardwareConfigured = true;
             _decodeStatus = "D3D11VA configured on the consumer device";
         }
@@ -602,8 +379,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _decodeMode == DecodeMode.Auto
             && exception is not OperationCanceledException)
         {
-            _texturePool?.Dispose();
-            _texturePool = null;
+            _converter.ClearHardware();
             if (_hardwareDeviceReference is not null)
             {
                 var reference = _hardwareDeviceReference;
@@ -666,34 +442,50 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         }
         else
         {
-            var startTimestamp = _videoStream->start_time == ffmpeg.AV_NOPTS_VALUE
-                ? 0L
-                : _videoStream->start_time;
-            seconds = (timestamp - startTimestamp) * ToDouble(_videoStream->time_base);
+            seconds = timestamp * ToDouble(_videoStream->time_base) - _demux!.OriginSeconds;
         }
 
         return TimeSpan.FromSeconds(Math.Max(0d, seconds));
     }
 
-    private void Seek(TimeSpan position)
+    public void Seek(TimeSpan position)
     {
-        var timeBase = ToDouble(_videoStream->time_base);
-        if (timeBase <= 0d)
-            throw new NotSupportedException("The video stream has no usable time base for seeking.");
-
-        var streamStart = _videoStream->start_time == ffmpeg.AV_NOPTS_VALUE
-            ? 0L
-            : _videoStream->start_time;
-        var target = checked(streamStart + (long)Math.Round(position.TotalSeconds / timeBase));
-        Check(
-            ffmpeg.av_seek_frame(
-                _formatContext,
-                _videoStreamIndex,
-                target,
-                ffmpeg.AVSEEK_FLAG_BACKWARD),
-            $"seek to {position.TotalSeconds:0.###} seconds");
-        ffmpeg.avcodec_flush_buffers(_codecContext);
+        _demux!.Seek(position);
+        Flush(position, _cancellationToken);
     }
+
+    public int StreamIndex => _videoStreamIndex;
+    public void SetCancellation(CancellationToken token) => _cancellationToken = token;
+
+    public void Flush(TimeSpan position, CancellationToken token)
+    {
+        _cancellationToken = token;
+        ffmpeg.avcodec_flush_buffers(_codecContext);
+        _minimumTimecode = position;
+        _decodedFrameCount = MediaInfo.FrameRate.N > 0
+            ? (long)(position.TotalSeconds * MediaInfo.FrameRate.N / MediaInfo.FrameRate.D) : 0;
+    }
+
+    public int SendPacket(AVPacket* packet) => ffmpeg.avcodec_send_packet(_codecContext, packet);
+
+    public NativeVideoFrame? ReceiveRaw()
+    {
+        _cancellationToken.ThrowIfCancellationRequested();
+        var result = ffmpeg.avcodec_receive_frame(_codecContext, _frame);
+        if (result == Again || result == ffmpeg.AVERROR_EOF) return null;
+        Check(result, "receive video frame");
+        try
+        {
+            var time = ReadTimecode(_frame).TotalSeconds;
+            var duration = _frame->duration > 0 ? _frame->duration * ToDouble(_videoStream->time_base)
+                : MediaInfo.FrameRate.N > 0 ? MediaInfo.FrameRate.D / (double)MediaInfo.FrameRate.N : 0;
+            _decodedFrameCount++;
+            return new NativeVideoFrame(_frame, time, duration);
+        }
+        finally { ffmpeg.av_frame_unref(_frame); }
+    }
+
+    public DecodedVideoFrame Convert(NativeVideoFrame frame) => ConvertFrame(frame.Frame, TimeSpan.FromSeconds(frame.Time));
 
     private bool DrainDecoder(Func<DecodedVideoFrame, bool> acceptFrame)
     {
@@ -709,9 +501,6 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 
         return ReceiveFrames(acceptFrame);
     }
-
-    private int Interrupt(void* _)
-        => _cancellationToken.IsCancellationRequested ? 1 : 0;
 
     private static TimeSpan ReadDuration(AVFormatContext* formatContext, AVStream* stream)
     {

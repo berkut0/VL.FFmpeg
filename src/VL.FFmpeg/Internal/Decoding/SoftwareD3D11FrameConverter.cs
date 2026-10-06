@@ -10,7 +10,7 @@ namespace VL.FFmpeg.Internal.Decoding;
 internal unsafe sealed class SoftwareD3D11TextureLease : ID3D11TextureLease
 {
     private SoftwareD3D11FrameConverter? _owner;
-    private SoftwareD3D11FrameConverter.Slot? _slot;
+    private readonly SoftwareD3D11FrameConverter.Slot _slot;
 
     internal SoftwareD3D11TextureLease(
         SoftwareD3D11FrameConverter owner,
@@ -30,15 +30,13 @@ internal unsafe sealed class SoftwareD3D11TextureLease : ID3D11TextureLease
     public void Dispose()
     {
         var owner = Interlocked.Exchange(ref _owner, null);
-        var slot = Interlocked.Exchange(ref _slot, null);
-        if (owner is not null && slot is not null)
-            owner.Return(slot);
+        owner?.Return(_slot);
     }
 }
 
-internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
+internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable, IResourceCache
 {
-    internal const int Capacity = 3;
+    internal const int Capacity = 8;
 
     private readonly object _syncRoot = new();
     private readonly ID3D11Device* _device;
@@ -50,6 +48,7 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
     private readonly void* _pixelShader;
     private readonly void* _sampler;
     private readonly List<Slot> _slots = [];
+    private readonly ResourceBudget _budget;
 
     private SoftwareFrameLayout? _layout;
     private int _nextSlotIndex;
@@ -63,6 +62,7 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
             throw new ArgumentException("A D3D11 device is required.", nameof(devicePointer));
 
         _device = (ID3D11Device*)devicePointer;
+        _budget = ResourceBudget.ForDevice(devicePointer);
         D3D11Interop.AddRef(_device);
         try
         {
@@ -91,6 +91,7 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
             D3D11Interop.Release(_device);
             throw;
         }
+        _budget.Register(this);
     }
 
     internal int Width { get; private set; }
@@ -150,18 +151,15 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
             if (_layout is null)
                 Configure(layout);
 
-            while (!TryRent(out slot))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ObjectDisposedException.ThrowIf(_disposed, this);
-                Monitor.Wait(_syncRoot, millisecondsTimeout: 5);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!TryRent(out slot)) throw new ResourceUnavailableException();
             slot.InUse = true;
         }
 
         void* commandList = null;
         try
         {
+            InitializeSlot(slot);
             UploadPlanes(frame, layout, slot);
             UploadConstants(frame, layout, color, slot.ConstantBuffer);
 
@@ -214,7 +212,9 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
             {
                 D3D11Interop.Release(slot.OutputTexture);
                 slot.OutputTexture = null;
+                _budget.Release(slot.Bytes);
             }
+            _budget.Changed.Pulse();
             Monitor.PulseAll(_syncRoot);
         }
     }
@@ -226,6 +226,7 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
             if (_disposed)
                 return;
             _disposed = true;
+            _budget.Unregister(this);
             foreach (var slot in _slots)
             {
                 foreach (var plane in slot.Planes)
@@ -238,6 +239,7 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
                 {
                     D3D11Interop.Release(slot.OutputTexture);
                     slot.OutputTexture = null;
+                    _budget.Release(slot.Bytes);
                 }
             }
 
@@ -251,42 +253,58 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
         }
     }
 
-    private void Configure(SoftwareFrameLayout layout)
+    public void TrimIdle()
     {
-        for (var slotIndex = 0; slotIndex < Capacity; slotIndex++)
+        if (!Monitor.TryEnter(_syncRoot)) return;
+        try
         {
-            var slot = new Slot();
-            try
+            if (_disposed) return;
+            for (var i = _slots.Count - 1; i >= 0; i--)
             {
-                for (var planeIndex = 0; planeIndex < layout.Planes.Length; planeIndex++)
-                {
-                    var plane = layout.Planes[planeIndex];
-                    slot.Planes[planeIndex] = new UploadPlane(
-                        _device,
-                        plane.Width,
-                        plane.Height,
-                        plane.DxgiFormat);
-                }
-                slot.ConstantBuffer = D3D11ShaderInterop.CreateConstantBuffer(
-                    _device,
-                    checked((uint)Marshal.SizeOf<ShaderConstants>()));
-                slot.OutputTexture = D3D11Interop.CreateTexture(
-                    _device,
-                    layout.Width,
-                    layout.Height,
-                    _outputFormat);
-                slot.OutputView = D3D11ShaderInterop.CreateRenderTargetView(_device, slot.OutputTexture);
-                _slots.Add(slot);
-            }
-            catch
-            {
+                var slot = _slots[i];
+                if (slot.InUse) continue;
+                _slots.RemoveAt(i);
                 slot.Dispose();
-                throw;
+                _budget.Release(slot.Bytes);
             }
         }
+        finally { Monitor.Exit(_syncRoot); }
+    }
+
+    private void Configure(SoftwareFrameLayout layout)
+    {
         Width = layout.Width;
         Height = layout.Height;
         _layout = layout;
+    }
+
+    private Slot? CreateSlot()
+    {
+        var layout = _layout!;
+        var bytes = checked((long)Width * Height * (_linearOutput ? 8 : 4));
+        foreach (var plane in layout.Planes) bytes += checked((long)plane.Width * plane.Height * plane.BytesPerPixel);
+        if (!_budget.TryReserve(bytes)) return null;
+        var slot = new Slot { Bytes = bytes, InUse = true };
+        _slots.Add(slot);
+        return slot;
+    }
+
+    private void InitializeSlot(Slot slot)
+    {
+        // Only the conversion owner initializes slots; reclaimers skip InUse slots.
+        // Consumer release never waits for these driver allocations.
+        var layout = _layout!;
+        for (var i = 0; i < layout.Planes.Length; i++)
+        {
+            var plane = layout.Planes[i];
+            slot.Planes[i] ??= new UploadPlane(_device, plane.Width, plane.Height, plane.DxgiFormat);
+        }
+        if (slot.ConstantBuffer is null)
+            slot.ConstantBuffer = D3D11ShaderInterop.CreateConstantBuffer(_device, checked((uint)Marshal.SizeOf<ShaderConstants>()));
+        if (slot.OutputTexture is null)
+            slot.OutputTexture = D3D11Interop.CreateTexture(_device, Width, Height, _outputFormat);
+        if (slot.OutputView is null)
+            slot.OutputView = D3D11ShaderInterop.CreateRenderTargetView(_device, slot.OutputTexture);
     }
 
     private void UploadPlanes(AVFrame* frame, SoftwareFrameLayout layout, Slot slot)
@@ -421,8 +439,8 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
             slot = candidate;
             return true;
         }
-        slot = null!;
-        return false;
+        slot = _slots.Count < Capacity ? CreateSlot()! : null!;
+        return slot is not null;
     }
 
     private static byte[] LoadShader(string filename)
@@ -465,6 +483,7 @@ internal unsafe sealed class SoftwareD3D11FrameConverter : IDisposable
         public ID3D11Texture2D* OutputTexture;
         public void* OutputView;
         public bool InUse;
+        public long Bytes;
 
         public void Dispose()
         {

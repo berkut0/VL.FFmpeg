@@ -18,28 +18,78 @@ VideoPlayer | VideoPlayer (Advanced Controls)
 There is no Skia- or Stride-specific public API. Both renderers consume
 `VideoFrame` through standard Gamma nodes.
 
-## Components
+## Realtime core
 
-- `FFmpegVideoDecoder` owns demux, codec selection and software/D3D11VA decode
-  contexts.
-- `FFmpegAudioDecoder` owns a separate audio demux/codec pipeline and converts
-  decoded samples to planar float through libswresample.
-- `FFmpegAudioSession` fills a bounded `AudioSampleBuffer`; audio pulls never
-  perform native I/O or wait for decode.
-- `FFmpegPlayerSession` owns playback coordination, the bounded frame queue and worker.
-- `PlaybackTimeline` maps clock time and transport state to media time.
-- `PlaybackControl` serializes option changes before notifying the active session.
-- `VideoPlayerSource` is the shared `IVideoSource2` and `IAudioSource` boundary.
-- `VideoPlayer` maps conventional pins to transport options.
-- `VideoPlayer (Advanced Controls)` exposes a reusable `VideoPlayerControl` object instead
-  of transport inputs. Its operations can be called from separate patch locations.
-- `D3D11TexturePool` converts NV12/P010 decoder surfaces into leased nonlinear
-  BGRA8 or linear RGBA16F textures on the consumer device.
-- `SoftwareD3D11FrameConverter` uploads software-decoded planes and performs
-  matrix, range, transfer and alpha conversion with one embedded HLSL shader.
-- `FFmpegRuntime` resolves the pinned Windows x64 native runtime.
-- Relocated FFmpeg.AutoGen source is compiled into `VL.FFmpeg.dll` under
-  `VL.FFmpeg.Interop.AutoGen`. Gamma imports only `VL.FFmpeg.Nodes`.
+`VideoPlayerSource` owns one `PlaybackSession`; `FFmpegPlayerSession` is its
+video attachment. Audio demand is configured asynchronously. Both streams use
+one persistent `FFmpegDemuxContext`. Container I/O runs separately from the
+bounded CPU work admission in `PlaybackWork`; codec thread counts contribute
+to its concurrency budget; codecs without threading reserve one worker. Packet
+read-ahead follows the media clock with allowance for reorder/thread delay. GPU submission is serialized per consumer device.
+
+Video packets -> codec -> two referenced `NativeVideoFrame` slots -> deadline
+selection -> `VideoFrameConverter` -> up to six leased frames -> Gamma.
+Audio packets -> codec/resampler -> bounded `AudioSampleBuffer` -> Gamma.
+
+`MasterClock` waits for the first video frame at initial startup, then follows
+the consumer frame clock through starvation. Audio-only playback uses monotonic
+time; attaching video preserves elapsed media time. Workers/audio extrapolate
+an atomic clock snapshot. Paused seek publishes the containing frame. Playing
+seek continues advancing from the command, and stale frames are discarded before
+conversion. The scheduler permits at most one 150 ms buffering window of
+recoverable lateness before rejecting an otherwise useful candidate. If no image
+has been delivered for 250 ms (or a seek has not yielded its first image), it
+converts the newest available candidate even if late. This bounded progress path
+prevents sustained decode/I/O overload from discarding all output forever. It
+does not revive frames beyond the current cycle's end or slow the media clock.
+Sustained lag over one second for 500 ms requests recovery seeking, limited to
+once per two seconds. Automatic recovery retains the displayed-image state and
+health history, so it can retry and does not latch `Buffering`. Its status message
+clears when a presented frame catches up.
+
+Seek and loop reuse the open container, codecs and compatible converters.
+Generation-scoped queues prevent cancelled work from publishing into a newer
+request. A loop adds a cycle offset to a common container timeline, preserving
+stream offsets. Codec and resampler draining precede rewind; ready leases survive
+it. Audio reconfiguration starts from execution time, never the producer tail.
+
+Audio pulls only read a published buffer and enqueue format demand: they do not
+retire video resources, perform native I/O, or wait for a producer. Underruns and
+the final partial block are padded with silence. Future PCM waits asynchronously
+for capacity; expired samples are not replayed. A sample cursor absorbs callback
+jitter, correcting lag beyond max(50 ms, two requested blocks); prefetch is
+limited to 250 ms. Audio packet overflow records a discontinuity and resets its
+codec/resampler, without blocking video. The API supplies no DAC position, so
+sample-accurate hardware A/V sync is not claimed.
+
+## Resource ownership and budgets
+
+- Video lead target: 150 ms, at most six ready frames and two raw queued frames.
+- Packet queues: eight packets / 64 MiB each. A single larger packet is permitted
+  within the shared byte budget; video packet dependencies are preserved.
+- Audio target: 250 ms or one requested block, whichever is larger. One decoded
+  block can exceed the target. Queued PCM and outstanding audio output leases are
+  charged to the CPU budget.
+- Owned CPU buffers/packets: 1 GiB process-wide. GPU output/upload textures:
+  1 GiB per device. Allocation is lazy; idle caches can be reclaimed between
+  players. FFmpeg internal working memory, graphics-driver allocations and
+  shared .NET pool caches are outside these owned-resource counters.
+- CPU and GPU storage returns only when the last consumer handle releases it.
+  A retired pool remains responsible for outstanding leases. Configuration
+  changes retire pools instead of disabling GPU conversion permanently.
+- D3D11 input views are cached with retained surfaces and bounded to 64 entries;
+  output/upload slots are allocated on demand, up to eight per pool.
+- Native contexts are released after all workers finish. Final `Dispose` joins
+  them deterministically; no fire-and-forget native cleanup is used.
+
+`PlaybackOverload` includes late presentation and resource exhaustion. `Status`
+reports queue starvation, skipped frames, I/O/decode/conversion durations
+(including native video send and receive calls), forced progress conversions,
+resource waits, audio gaps and container open/seek counts. Diagnostic text is
+refreshed at most four times per second; source/conversion metadata is cached.
+
+The native runtime remains pinned to verified absolute paths. Relocated AutoGen
+is embedded in `VL.FFmpeg.dll`; Gamma imports only `VL.FFmpeg.Nodes`.
 
 ## Alpha
 
@@ -69,13 +119,15 @@ Not implemented: D3D11VA private-device CPU transfer, playback rate,
 subtitles, encoding, camera capture, HDR tone mapping, network streams and
 auxiliary-layer or multi-stream alpha composition.
 
-Audio and video currently use separate FFmpeg demux contexts. They share
-transport commands, while video presentation remains frame-clock-driven. The
-long-term A/V clock policy is an unresolved product decision.
+CPU-only linear RGBA16F conversion remains expensive at UHD resolutions.
+Its swscale conversion and exact transfer LUT are retained; GPU conversion is
+preferred when the consumer provides a supported device/layout. Alternative
+upload methods and SIMD transfer conversion require measurements and pixel
+regressions before adoption.
 
 ## Invariants
 
-- Decode never blocks Gamma's frame thread.
+- Native decode and container I/O never run inside frame/audio callbacks.
 - Audio pulls never block on the decode worker.
 - Queues are bounded.
 - Native I/O observes cancellation.
@@ -93,3 +145,19 @@ long-term A/V clock policy is an unresolved product decision.
 - FFmpeg software decoding uses at most eight codec threads so high-resolution
   frame-threaded formats gain throughput without unbounded native frame memory.
 - Frame format follows `VideoPlaybackContext.UsesLinearColorspace`.
+
+## Verification
+
+`dotnet test tests/VL.FFmpeg.Tests/VL.FFmpeg.Tests.csproj -c Release` covers
+transport, cancellation ownership, shared-container seek/loop, CPU/GPU color,
+alpha, frame leases, audio drain, budget reclamation and realtime dropping.
+
+The local comparison harness and JSON results are in `artifacts/realtime-refactor`
+(`comparison.json`; final warmed four-player pair: `warm-before.json` and
+`warm-window.json`). The targeted saturated case adds a one-second warmup before
+five seconds of measurement.
+It compares the original commit and the refactor on identical cached Y4M data:
+one 4K stream, four 4K streams, twelve 640x360 streams (three seconds each), plus
+40 warmed isolated 4K CPU conversions. This measures the headless software path,
+not Gamma renderer or compressed-codec throughput. Gamma/Skia/Stride/export and
+package validation still require the project owner's release checks.

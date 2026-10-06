@@ -21,6 +21,8 @@ Windows x64.
 - BT.601/BT.709/BT.2020 matrix and full/limited-range conversion
 - Nonlinear BGRA8 or linear RGBA16F output according to the consumer
 - Keeps decoding off the render thread
+- Follows realtime under load, skipping obsolete frames before conversion
+- Reuses decoder and frame buffers across seeks and loops
 
 `Decode Mode` defaults to `Auto`: D3D11VA when the consumer and stream support
 it, software decode otherwise. A software-decoded frame still stays on the GPU

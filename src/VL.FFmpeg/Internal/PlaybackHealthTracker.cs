@@ -55,7 +55,7 @@ internal sealed class PlaybackHealthTracker
                 && queueDepth == 0;
             ObserveQueueEmpty(clockSeconds, queueEmpty);
 
-            var latenessSeconds = queueEmpty && frameDurationSeconds > 0d
+            var latenessSeconds = active && _hasPresentedFrame && frameDurationSeconds > 0d
                 ? targetTimelineSeconds
                     - (_lastPresentedTimelineSeconds + frameDurationSeconds)
                 : 0d;

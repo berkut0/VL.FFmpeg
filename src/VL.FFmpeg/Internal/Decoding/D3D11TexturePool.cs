@@ -13,7 +13,7 @@ internal interface ID3D11TextureLease : IDisposable
 internal unsafe sealed class D3D11TextureLease : ID3D11TextureLease
 {
     private D3D11TexturePool? _pool;
-    private D3D11TexturePool.Slot? _slot;
+    private readonly D3D11TexturePool.Slot _slot;
 
     internal D3D11TextureLease(D3D11TexturePool pool, D3D11TexturePool.Slot slot)
     {
@@ -31,15 +31,13 @@ internal unsafe sealed class D3D11TextureLease : ID3D11TextureLease
     public void Dispose()
     {
         var pool = Interlocked.Exchange(ref _pool, null);
-        var slot = Interlocked.Exchange(ref _slot, null);
-        if (pool is not null && slot is not null)
-            pool.Return(slot);
+        pool?.Return(_slot);
     }
 }
 
-internal unsafe sealed class D3D11TexturePool : IDisposable
+internal unsafe sealed class D3D11TexturePool : IDisposable, IResourceCache
 {
-    internal const int Capacity = 3;
+    internal const int Capacity = 8;
 
     private readonly object _syncRoot = new();
     private readonly ID3D11Device* _device;
@@ -53,6 +51,8 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
     private readonly bool _linearOutput;
     private readonly int _outputFormat;
     private readonly List<Slot> _slots = [];
+    private readonly Dictionary<(nint, uint), nint> _inputViews = [];
+    private readonly ResourceBudget _budget;
 
     private void* _enumerator;
     private void* _processor;
@@ -75,6 +75,7 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         }
 
         _device = context->device;
+        _budget = ResourceBudget.ForDevice((nint)_device);
         _deviceContext = context->device_context;
         _videoDevice = context->video_device;
         _videoContext = context->video_context;
@@ -108,6 +109,7 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             D3D11Interop.Release(_device);
             throw;
         }
+        _budget.Register(this);
     }
 
     internal int Width { get; private set; }
@@ -117,6 +119,9 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
     internal PixelFormat PixelFormat => _linearOutput
         ? PixelFormat.R16G16B16A16F
         : PixelFormat.B8G8R8A8;
+
+    internal bool Matches(AVFrame* frame) => Width == 0 || (Width == frame->width && Height == frame->height
+        && _inputFormat == D3D11Interop.GetDescription((ID3D11Texture2D*)frame->data[0]).Format);
 
     internal D3D11TextureLease Convert(
         AVFrame* frame,
@@ -168,12 +173,8 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
             EnsureConfiguration(frame->width, frame->height, sourceDescription.Format, frameRate);
-            while (!TryRent(out slot))
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                ObjectDisposedException.ThrowIf(_disposed, this);
-                Monitor.Wait(_syncRoot, millisecondsTimeout: 5);
-            }
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!TryRent(out slot)) throw new ResourceUnavailableException();
             slot.InUse = true;
         }
 
@@ -183,11 +184,17 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             EnterDeviceLock();
             try
             {
-                inputView = D3D11Interop.CreateInputView(
-                    _videoDevice,
-                    sourceTexture,
-                    _enumerator,
-                    checked((uint)(nint)frame->data[1]));
+                // Native allocation must not hold the metadata lock used by consumer release.
+                if (slot.Texture is null) slot.Texture = D3D11Interop.CreateTexture(_device, Width, Height, _outputFormat);
+                if (slot.OutputView is null) slot.OutputView = D3D11Interop.CreateOutputView(_videoDevice, slot.Texture, _enumerator);
+                var key = ((nint)sourceTexture, checked((uint)(nint)frame->data[1]));
+                if (!_inputViews.TryGetValue(key, out var cached))
+                {
+                    if (_inputViews.Count >= 64) ClearInputViews();
+                    cached = (nint)D3D11Interop.CreateInputView(_videoDevice, sourceTexture, _enumerator, key.Item2);
+                    _inputViews.Add(key, cached);
+                }
+                inputView = (void*)cached;
                 D3D11Interop.ConfigureAndBlit(
                     _videoContext,
                     _videoContext1,
@@ -225,7 +232,7 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         }
         finally
         {
-            D3D11Interop.Release(inputView);
+            // Cached views retain their decoder surface until configuration retirement.
         }
     }
 
@@ -241,7 +248,9 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             {
                 D3D11Interop.Release(slot.Texture);
                 slot.Texture = null;
+                _budget.Release(slot.Bytes);
             }
+            _budget.Changed.Pulse();
             Monitor.PulseAll(_syncRoot);
         }
     }
@@ -253,6 +262,7 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
             if (_disposed)
                 return;
             _disposed = true;
+            _budget.Unregister(this);
 
             foreach (var slot in _slots)
             {
@@ -262,9 +272,11 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
                 {
                     D3D11Interop.Release(slot.Texture);
                     slot.Texture = null;
+                    _budget.Release(slot.Bytes);
                 }
             }
 
+            ClearInputViews();
             D3D11Interop.Release(_processor);
             _processor = null;
             D3D11Interop.Release(_enumerator);
@@ -307,23 +319,6 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
                 requiredFlags: 2);
             _processor = D3D11Interop.CreateVideoProcessor(_videoDevice, _enumerator);
 
-            for (var index = 0; index < Capacity; index++)
-            {
-                var texture = D3D11Interop.CreateTexture(_device, width, height, _outputFormat);
-                void* outputView = null;
-                try
-                {
-                    outputView = D3D11Interop.CreateOutputView(_videoDevice, texture, _enumerator);
-                    _slots.Add(new Slot { Texture = texture, OutputView = outputView });
-                }
-                catch
-                {
-                    D3D11Interop.Release(outputView);
-                    D3D11Interop.Release(texture);
-                    throw;
-                }
-            }
-
             Width = width;
             Height = height;
             _inputFormat = inputFormat;
@@ -348,7 +343,36 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         }
 
         slot = null!;
-        return false;
+        var bytes = checked((long)Width * Height * (_linearOutput ? 8 : 4));
+        if (_slots.Count >= Capacity || !_budget.TryReserve(bytes)) return false;
+        slot = new Slot { Bytes = bytes, InUse = true };
+        _slots.Add(slot);
+        return true;
+    }
+
+    public void TrimIdle()
+    {
+        if (!Monitor.TryEnter(_syncRoot)) return;
+        try
+        {
+            if (_disposed) return;
+            for (var i = _slots.Count - 1; i >= 0; i--)
+            {
+                var slot = _slots[i];
+                if (slot.InUse) continue;
+                _slots.RemoveAt(i);
+                D3D11Interop.Release(slot.OutputView);
+                D3D11Interop.Release(slot.Texture);
+                _budget.Release(slot.Bytes);
+            }
+        }
+        finally { Monitor.Exit(_syncRoot); }
+    }
+
+    private void ClearInputViews()
+    {
+        foreach (var view in _inputViews.Values) D3D11Interop.Release((void*)view);
+        _inputViews.Clear();
     }
 
     private void EnterDeviceLock()
@@ -368,5 +392,6 @@ internal unsafe sealed class D3D11TexturePool : IDisposable
         public ID3D11Texture2D* Texture;
         public void* OutputView;
         public bool InUse;
+        public long Bytes;
     }
 }
