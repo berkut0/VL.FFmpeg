@@ -67,8 +67,8 @@ internal sealed class AudioSampleBuffer : IDisposable
             var remaining = frame.Timecode.TotalSeconds + frame.SampleCount / (double)SampleRate - mediaTime();
             if (remaining <= 0) return false;
             if (TryWrite(frame)) return true;
-            await Task.WhenAny(changed, budgetChanged, Task.Delay(TimeSpan.FromSeconds(Math.Clamp(remaining, .001, 1)), token))
-                .WaitAsync(token).ConfigureAwait(false);
+            await PlaybackWait.ForEitherChange(changed, budgetChanged,
+                TimeSpan.FromSeconds(Math.Clamp(remaining, .001, 1)), token).ConfigureAwait(false);
         }
         return false;
     }

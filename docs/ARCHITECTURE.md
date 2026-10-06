@@ -52,6 +52,10 @@ Generation-scoped queues prevent cancelled work from publishing into a newer
 request. A loop adds a cycle offset to a common container timeline, preserving
 stream offsets. Codec and resampler draining precede rewind; ready leases survive
 it. Audio reconfiguration starts from execution time, never the producer tail.
+Commands invalidate generations immediately; a control worker delivers
+cancellation and retires queued resources outside the presentation lock.
+Timed waits explicitly check cancellation even when a signal is already complete,
+and round positive sub-millisecond delays up to avoid spinning during pacing.
 
 Audio pulls only read a published buffer and enqueue format demand: they do not
 retire video resources, perform native I/O, or wait for a producer. Underruns and
@@ -84,7 +88,8 @@ sample-accurate hardware A/V sync is not claimed.
 
 `PlaybackOverload` includes late presentation and resource exhaustion. `Status`
 reports queue starvation, skipped frames, I/O/decode/conversion durations
-(including native video send and receive calls), forced progress conversions,
+(maxima, including native video send and receive calls), recent video packet read
+time/size (exponential averages with weight 1/16), forced progress conversions,
 resource waits, audio gaps and container open/seek counts. Diagnostic text is
 refreshed at most four times per second; source/conversion metadata is cached.
 

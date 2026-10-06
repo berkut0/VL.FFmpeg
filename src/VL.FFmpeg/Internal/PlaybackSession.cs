@@ -17,6 +17,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
     private readonly AsyncPulse _commands = new();
     private readonly MasterClock _clock = new();
     private readonly Queue<ReadyFrame> _ready = new();
+    private readonly Queue<IDisposable> _retired = new();
     private readonly List<VideoBinding> _retiredBindings = [];
     private readonly Task _worker;
     private readonly Task _controlWorker;
@@ -28,6 +29,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
     private long _audioPositionTicks;
     private AudioSampleBuffer? _audioBuffer;
     private CancellationTokenSource? _active;
+    private long _activeGeneration;
     private PlaybackHealthTracker _health = new();
     private long _generation;
     private double _requestedPosition;
@@ -64,6 +66,9 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
     public PlaybackMetrics Metrics => new(Interlocked.Read(ref _containerOpens), Interlocked.Read(ref _seeks),
         Interlocked.Read(ref _conversions), Interlocked.Read(ref _droppedBeforeConvert), Interlocked.Read(ref _resourceWaits));
     private long _ioTicks;
+    // Written only by the demux owner; recent samples expose cache/storage changes.
+    private double _recentVideoReadTicks;
+    private double _recentVideoPacketBytes;
     private long _decodeTicks;
     private long _convertTicks;
     private string? _recoveryMessage;
@@ -155,8 +160,8 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
             while (_ready.TryPeek(out var frame) && (forcePreview || frame.Timeline <= target + .001))
             {
                 _ready.Dequeue();
-                if (frame.Generation != _generation) { frame.Frame.Dispose(); continue; }
-                selected?.Frame.Dispose();
+                if (frame.Generation != _generation) { RetireLocked(frame.Frame); continue; }
+                if (selected is not null) RetireLocked(selected.Frame);
                 selected = frame;
                 drained++;
                 if (_preview) { _preview = false; if (forcePreview) break; }
@@ -235,6 +240,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
             var changed = _commands.Next;
             bool audioOnly;
             long generation;
+            CancellationTokenSource? cancel;
             lock (_gate)
             {
                 var demand = Volatile.Read(ref _audioDemand);
@@ -245,11 +251,14 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
                 }
                 audioOnly = _binding is null && _audioFormat is not null;
                 generation = _generation;
+                cancel = _activeGeneration != _generation ? _active : null;
             }
+            Cancel(cancel);
+            DrainRetired();
             if (audioOnly)
             {
                 PublishWorkerStatus(generation);
-                await Task.WhenAny(changed, Task.Delay(250, _lifetime.Token)).WaitAsync(_lifetime.Token).ConfigureAwait(false);
+                await PlaybackWait.ForChange(changed, TimeSpan.FromMilliseconds(250), _lifetime.Token).ConfigureAwait(false);
             }
             else await changed.WaitAsync(_lifetime.Token).ConfigureAwait(false);
         }
@@ -260,10 +269,9 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
         _generation++;
         _recovering = recovery;
         _requestedPosition = Math.Max(0, position);
-        _active?.Cancel();
-        while (_ready.TryDequeue(out var frame)) frame.Frame.Dispose();
+        while (_ready.TryDequeue(out var frame)) RetireLocked(frame.Frame);
         Volatile.Write(ref _audioOutput, null);
-        _audioBuffer?.Dispose();
+        if (_audioBuffer is not null) RetireLocked(_audioBuffer);
         _audioBuffer = null;
         _audioReady = false;
         _preview = !recovery;
@@ -276,6 +284,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
         _audioFault = null;
         Volatile.Write(ref _resourceBlocked, 0);
         if (!recovery) _health = new();
+        _commands.Pulse();
         _wake.Pulse();
     }
 
@@ -298,7 +307,8 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
                 + $"dropped {health.DroppedFrames + Interlocked.Read(ref _droppedBeforeConvert)}; "
                 + $"max empty/late {health.MaxQueueEmptyDuration.TotalMilliseconds:F1}/{health.MaxPresentationLateness.TotalMilliseconds:F1} ms; "
                 + $"max producer/queue wait {health.MaxProducerDuration.TotalMilliseconds:F1}/{health.MaxQueueWaitDuration.TotalMilliseconds:F1} ms; "
-                + $"I/O/decode/convert {Milliseconds(_ioTicks):F1}/{Milliseconds(_decodeTicks):F1}/{Milliseconds(_convertTicks):F1} ms; "
+                + $"max I/O/decode/convert {Milliseconds(_ioTicks):F1}/{Milliseconds(_decodeTicks):F1}/{Milliseconds(_convertTicks):F1} ms; "
+                + $"recent video read {Volatile.Read(ref _recentVideoReadTicks) * 1000 / Stopwatch.Frequency:F1} ms/{Volatile.Read(ref _recentVideoPacketBytes) / 1048576:F2} MiB; "
                 + $"resource waits {Interlocked.Read(ref _resourceWaits)}; audio underruns {_audioBuffer?.Underruns ?? 0}; open/seek {metrics.ContainerOpens}/{metrics.Seeks}; converted {metrics.Conversions}; progress frames {Interlocked.Read(ref _starvationConversions)}; audio gaps {Interlocked.Read(ref _audioDiscontinuities)}.";
         }
         if (_lastDiagnosticStamp == stamp || _statusDescription != _description || _statusRecovery != _recoveryMessage)
@@ -319,27 +329,54 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
         while (Interlocked.CompareExchange(ref location, value, previous) != previous);
     }
 
+    private void RetireLocked(IDisposable resource)
+    {
+        _retired.Enqueue(resource);
+        _commands.Pulse();
+    }
+
+    private void DrainRetired()
+    {
+        while (true)
+        {
+            IDisposable resource;
+            lock (_gate) { if (!_retired.TryDequeue(out resource!)) return; }
+            resource.Dispose();
+        }
+    }
+
+    private static void Cancel(CancellationTokenSource? cancellation)
+    {
+        // The worker can finish/dispose a generation between snapshot and notification.
+        try { cancellation?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
     public void Dispose()
     {
+        CancellationTokenSource? active;
         lock (_gate)
         {
             if (_disposed) return;
             _disposed = true;
-            _lifetime.Cancel();
-            _active?.Cancel();
+            active = _active;
         }
+        // Never run cancellation callbacks or native resource releases under the presentation lock.
+        _lifetime.Cancel();
+        Cancel(active);
         _wake.Pulse();
         _commands.Pulse();
         try { Task.WhenAll(_worker, _controlWorker).GetAwaiter().GetResult(); }
         catch (OperationCanceledException) { }
         lock (_gate)
         {
-            while (_ready.TryDequeue(out var frame)) frame.Frame.Dispose();
-            _audioBuffer?.Dispose();
-            _binding?.Dispose();
-            foreach (var binding in _retiredBindings) binding.Dispose();
+            while (_ready.TryDequeue(out var frame)) RetireLocked(frame.Frame);
+            if (_audioBuffer is not null) RetireLocked(_audioBuffer);
+            if (_binding is not null) RetireLocked(_binding);
+            foreach (var binding in _retiredBindings) RetireLocked(binding);
             _retiredBindings.Clear();
         }
+        DrainRetired();
         _lifetime.Dispose();
     }
 

@@ -24,20 +24,24 @@ internal sealed partial class PlaybackSession
                 var wake = _wake.Next;
                 Request request;
                 CancellationTokenSource cancellation;
+                VideoBinding[] retiredBindings;
                 lock (_gate)
                 {
                     request = new(_generation, _options, _requestedPosition, _binding, _audioFormat, _recovering);
+                    retiredBindings = _retiredBindings.ToArray();
+                    _retiredBindings.Clear();
                     if (request.Generation == processed) cancellation = null!;
                     else
                     {
                         processed = request.Generation;
                         _active = cancellation = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+                        _activeGeneration = request.Generation;
                         _opening = !string.IsNullOrWhiteSpace(request.Options.Filename)
                             && (demux is null || demux.Filename != request.Options.Filename);
-                        foreach (var binding in _retiredBindings) binding.Dispose();
-                        _retiredBindings.Clear();
+
                     }
                 }
+                foreach (var binding in retiredBindings) binding.Dispose();
                 if (cancellation is null)
                 {
                     await wake.WaitAsync(_lifetime.Token).ConfigureAwait(false);
@@ -59,6 +63,8 @@ internal sealed partial class PlaybackSession
                             continue;
                         if (demux is null)
                         {
+                            Volatile.Write(ref _recentVideoReadTicks, 0);
+                            Volatile.Write(ref _recentVideoPacketBytes, 0);
                             demux = await Io(() => new FFmpegDemuxContext(request.Options.Filename, token), token).ConfigureAwait(false);
                             Interlocked.Increment(ref _containerOpens);
                         }
@@ -123,17 +129,7 @@ internal sealed partial class PlaybackSession
                             {
                                 softwareFallback = true;
                                 await videoSlot.Replace(() => PlaybackWork.Run(() => CreateVideo(request, demux, DecodeMode.Software, token), token)).ConfigureAwait(false);
-                                lock (_gate)
-                                {
-                                    if (request.Generation != _generation) token.ThrowIfCancellationRequested();
-                                    while (_ready.TryDequeue(out var old)) old.Frame.Dispose();
-                                    Volatile.Write(ref _audioOutput, null);
-                                    _audioBuffer?.Dispose();
-                                    _audioBuffer = audio is not null && request.Audio is not null
-                                        ? new AudioSampleBuffer(audio.OutputSampleRate, audio.OutputChannelCount, request.Audio.Capacity) : null;
-                                    _audioReady = false;
-                                    _recoveryMessage = $"Hardware fallback: {e.Message}";
-                                }
+                                if (!BeginSoftwareFallback(request, audio, e.Message, token)) break;
                                 var target = _clock.Position;
                                 mediaPosition = _duration > 0 && request.Options.Loop ? target % _duration : target;
                                 offset = target - mediaPosition;
@@ -179,6 +175,22 @@ internal sealed partial class PlaybackSession
             }
         }
         finally { videoSlot.Dispose(); audio?.Dispose(); demux?.Dispose(); }
+    }
+
+    private bool BeginSoftwareFallback(Request request, FFmpegAudioDecoder? audio, string reason, CancellationToken token)
+    {
+        lock (_gate)
+        {
+            if (request.Generation != _generation || token.IsCancellationRequested) return false;
+            while (_ready.TryDequeue(out var old)) RetireLocked(old.Frame);
+            Volatile.Write(ref _audioOutput, null);
+            if (_audioBuffer is not null) RetireLocked(_audioBuffer);
+            _audioBuffer = audio is not null && request.Audio is not null
+                ? new AudioSampleBuffer(audio.OutputSampleRate, audio.OutputChannelCount, request.Audio.Capacity) : null;
+            _audioReady = false;
+            _recoveryMessage = $"Hardware fallback: {reason}";
+            return true;
+        }
     }
 
     private void PublishWorkerStatus(long generation)
@@ -245,7 +257,8 @@ internal sealed partial class PlaybackSession
                 if (pointer is null) throw new OutOfMemoryException();
                 var started = Stopwatch.GetTimestamp();
                 var result = demux.Read(pointer);
-                Maximum(ref _ioTicks, Stopwatch.GetTimestamp() - started);
+                var readTicks = Stopwatch.GetTimestamp() - started;
+                Maximum(ref _ioTicks, readTicks);
                 if (result < 0)
                 {
                     ffmpeg.av_packet_free(&pointer);
@@ -262,6 +275,9 @@ internal sealed partial class PlaybackSession
                     if (packet.Size > ResourceBudget.Cpu.Capacity) throw new InvalidDataException("A media packet exceeds the playback memory budget.");
                     if (queue == video)
                     {
+                        var weight = _recentVideoPacketBytes == 0 ? 1d : 1d / 16;
+                        Volatile.Write(ref _recentVideoReadTicks, _recentVideoReadTicks + (readTicks - _recentVideoReadTicks) * weight);
+                        Volatile.Write(ref _recentVideoPacketBytes, _recentVideoPacketBytes + (packet.Size - _recentVideoPacketBytes) * weight);
                         var timestamp = pointer->dts != ffmpeg.AV_NOPTS_VALUE ? pointer->dts : pointer->pts;
                         var timeBase = demux.Context->streams[videoIndex]->time_base;
                         if (timestamp != ffmpeg.AV_NOPTS_VALUE && timeBase.den > 0)
@@ -269,11 +285,12 @@ internal sealed partial class PlaybackSession
                             var timeline = timestamp * (double)timeBase.num / timeBase.den - demux.OriginSeconds + offset;
                             while (!_clock.Waiting)
                             {
+                                token.ThrowIfCancellationRequested();
                                 var wake = _wake.Next;
                                 var ahead = timeline - _clock.Position - videoLead;
                                 if (ahead <= 0) break;
                                 if (Volatile.Read(ref _options).Play)
-                                    Task.WhenAny(wake, Task.Delay(TimeSpan.FromSeconds(Math.Min(ahead, 1)), token)).WaitAsync(token).GetAwaiter().GetResult();
+                                    PlaybackWait.ForChange(wake, TimeSpan.FromSeconds(Math.Min(ahead, 1)), token).GetAwaiter().GetResult();
                                 else wake.WaitAsync(token).GetAwaiter().GetResult();
                             }
                         }
@@ -289,6 +306,7 @@ internal sealed partial class PlaybackSession
                     {
                         while (!transferred)
                         {
+                            token.ThrowIfCancellationRequested();
                             var changed = queue.Changed.Next;
                             var budget = ResourceBudget.Cpu.Changed.Next;
                             transferred = queue.TryWrite(packet);
@@ -406,7 +424,7 @@ internal sealed partial class PlaybackSession
                     var ahead = frame.Time + offset - target - VideoFrameDeadline.Window;
                     if (!space || (!preview && ahead > 0))
                     {
-                        if (ahead > 0 && _options.Play) await Task.WhenAny(wake, Task.Delay(TimeSpan.FromSeconds(Math.Min(ahead, 1)), token)).WaitAsync(token).ConfigureAwait(false);
+                        if (ahead > 0 && _options.Play) await PlaybackWait.ForChange(wake, TimeSpan.FromSeconds(Math.Min(ahead, 1)), token).ConfigureAwait(false);
                         else await wake.WaitAsync(token).ConfigureAwait(false);
                         continue;
                     }
@@ -437,7 +455,7 @@ internal sealed partial class PlaybackSession
                     Volatile.Write(ref _resourceBlocked, 0);
                     lock (_gate)
                     {
-                        if (request.Generation != _generation || token.IsCancellationRequested) converted.Dispose();
+                        if (request.Generation != _generation || token.IsCancellationRequested) RetireLocked(converted);
                         else
                         {
                             _ready.Enqueue(new(request.Generation, cycle, frame.Time + offset, converted));
@@ -464,7 +482,7 @@ internal sealed partial class PlaybackSession
             {
                 var wake = _wake.Next;
                 var delay = frame.Timecode.TotalSeconds + offset - _clock.Position - .250;
-                await Task.WhenAny(wake, Task.Delay(TimeSpan.FromSeconds(Math.Clamp(delay, .001, 1)), token)).WaitAsync(token).ConfigureAwait(false);
+                await PlaybackWait.ForChange(wake, TimeSpan.FromSeconds(Math.Clamp(delay, .001, 1)), token).ConfigureAwait(false);
             }
             var buffer = Volatile.Read(ref _audioBuffer);
             if (buffer is null) return;
