@@ -23,6 +23,7 @@ internal unsafe sealed class FFmpegDemuxContext : IDisposable
         MediaInputOptions? options = null)
     {
         Filename = filename;
+        options = MediaInputOptions.WithNetworkDefaults(filename, options);
         _options = options;
         _isCancelled = () => token.IsCancellationRequested;
         _interrupt = _ => Volatile.Read(ref _isCancelled)() || Expired ? 1 : 0;
@@ -44,6 +45,10 @@ internal unsafe sealed class FFmpegDemuxContext : IDisposable
                 var result = ffmpeg.avformat_open_input(&context, filename, null, &nativeOptions);
                 _context = context;
                 CheckOperation(result, "open media");
+                // Plain HTTP retains TLS options for a possible later redirect. FFmpeg
+                // reports them unused until TLS is opened; keep rejecting all other leftovers.
+                if (Uri.TryCreate(filename, UriKind.Absolute, out var sourceUri) && sourceUri.Scheme == "http")
+                    ffmpeg.av_dict_set(&nativeOptions, "tls_verify", null, 0);
                 if (ffmpeg.av_dict_count(nativeOptions) > 0)
                     throw new NotSupportedException("FFmpeg did not accept the requested input options.");
                 CheckOperation(ffmpeg.avformat_find_stream_info(_context, null), "inspect media streams");
@@ -88,12 +93,17 @@ internal unsafe sealed class FFmpegDemuxContext : IDisposable
     public void Seek(TimeSpan position)
     {
         var target = checked((long)Math.Round((position.TotalSeconds + OriginSeconds) * ffmpeg.AV_TIME_BASE));
-        Check(ffmpeg.av_seek_frame(_context, -1, target, ffmpeg.AVSEEK_FLAG_BACKWARD), "seek media");
-        if (_context->pb is not null)
+        BeginOperation(_options?.ReadTimeout);
+        try
         {
-            _context->pb->error = 0;
-            _context->pb->eof_reached = 0;
+            CheckOperation(ffmpeg.av_seek_frame(_context, -1, target, ffmpeg.AVSEEK_FLAG_BACKWARD), "seek media");
+            if (_context->pb is not null)
+            {
+                _context->pb->error = 0;
+                _context->pb->eof_reached = 0;
+            }
         }
+        finally { _deadline = 0; }
     }
 
     public void Dispose()

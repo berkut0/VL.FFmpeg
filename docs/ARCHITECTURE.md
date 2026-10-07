@@ -176,8 +176,10 @@ MediaPipeline/MediaDecodePump, the existing codecs, converter, pools and worker
 budgets. Native frames retain optional unmodified source timestamps separately
 from presentation time, preserving the established file mapping.
 
-Open/probe has a 10-second cooperative deadline; each native read has a 5-second
-deadline. Queue waits do not consume that deadline. Cancellation interrupts I/O;
+Shared network input defaults apply to both controllers: open/probe has a
+10-second cooperative deadline; native read and seek each have a 5-second
+deadline. Local-file defaults are unchanged. Queue waits do not consume that
+deadline. Cancellation interrupts I/O;
 the owner joins the run before closing its demux/codecs or releasing device
 references. A superseded generation cannot publish frames. Enabling, changing
 URL or a Reconnect bang creates a new connection. Audio output reconfiguration
@@ -187,8 +189,11 @@ on the same demux. Outstanding CPU/GPU handles survive retirement.
 Transient network failures and EOF retry after 1, 2, 4, 8 and 10 seconds, then
 fault. Ten seconds of healthy output replenishes the retry allowance. Auth and
 unsupported-format failures are terminal. The live controller owns retries;
-FFmpeg HTTP retry is not enabled separately. HTTPS requests certificate
-verification. Status does not include input URLs or arbitrary exception text.
+FFmpeg HTTP retry is not enabled separately. HTTP/HTTPS requests require TLS
+certificate verification, including redirects during opening and later Range
+requests. Plain HTTP retains the TLS option for a possible redirect; it is the
+only allowed deferred native option. Status does not include input URLs or
+arbitrary exception text.
 
 A common A/V epoch preserves source offsets. Backward timestamp jumps over
 500 ms, or forward jumps exceeding arrival-time gaps by over 5 seconds, retire
@@ -253,6 +258,7 @@ transport, cancellation ownership, shared-container seek/loop, CPU/GPU color,
 alpha, frame leases, audio drain, budget reclamation and realtime dropping.
 
 Measured results and test conditions are summarized in [PERFORMANCE.md](PERFORMANCE.md).
+Network behavior and remaining support limits are recorded in [NETWORK-VALIDATION.md](NETWORK-VALIDATION.md).
 Temporary tracing, benchmark executables and raw investigation logs are not part
 of the playback library. Gamma/Skia/Stride/export and package validation still
 require the project owner's release checks.

@@ -71,20 +71,14 @@ internal sealed partial class LiveSession
 
                     async Task ConnectAndPlay()
                     {
-                        var uri = LiveConnectionPolicy.ValidateUrl(options.Url);
+                        LiveConnectionPolicy.ValidateUrl(options.Url);
                         if (demux is null)
                         {
                             SetStatus(LivePlaybackPhase.Connecting, "Opening live source.", revision);
-                            var native = new Dictionary<string, string>();
-                            if (uri.Scheme == "rtsp")
-                            {
-                                native["rtsp_transport"] = options.Transport == LiveTransport.Tcp ? "tcp" : "udp";
-                                native["timeout"] = "5000000";
-                            }
-                            else native["rw_timeout"] = "5000000";
-                            if (uri.Scheme == "https") native["tls_verify"] = "1";
+                            var inputOptions = MediaInputOptions.ForNetwork(options.Url,
+                                options.Transport == LiveTransport.Tcp ? "tcp" : "udp");
                             demux = await MediaPipeline.Io(() => new FFmpegDemuxContext(options.Url, token,
-                                options: new(TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(5), native)), token).ConfigureAwait(false);
+                                options: inputOptions), token).ConfigureAwait(false);
                             _diagnostics.ContainerOpened();
                             if (demux.FormatName.Split(',').Any(name => name is "hls" or "dash" or "concat"))
                                 throw new NotSupportedException("Playlist streams are outside the initial live contract.");
