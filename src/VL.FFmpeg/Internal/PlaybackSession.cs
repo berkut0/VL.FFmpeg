@@ -40,7 +40,6 @@ internal sealed partial class PlaybackSession : IDisposable
     private double _frameDuration;
     private double _position;
     private double _presentedTimeline;
-    private long _lastPresentedStamp;
     private readonly RealtimeRecovery _recovery = new();
     private bool _opening;
     private bool _ended;
@@ -140,7 +139,10 @@ internal sealed partial class PlaybackSession : IDisposable
             ReadyFrame? selected = null;
             var drained = 0;
             var forcePreview = _preview && !_options.Play;
-            while (_ready.TryPeek(out var frame) && (forcePreview || frame.Timeline <= target + VideoSchedulingPolicy.TimestampTolerance))
+            // Pause freezes the displayed image, not just the clock. Late producer results
+            // may still arrive below that clock; only an explicit preview may replace it.
+            while ((_options.Play || forcePreview) && _ready.TryPeek(out var frame)
+                && (forcePreview || frame.Timeline <= target + VideoSchedulingPolicy.TimestampTolerance))
             {
                 _ready.Dequeue();
                 if (frame.Generation != _generation) { RetireLocked(frame.Frame); continue; }
@@ -158,7 +160,6 @@ internal sealed partial class PlaybackSession : IDisposable
                 result = selected.Frame.CreateProvider();
                 selected.Frame.Dispose();
                 _presented = true;
-                _lastPresentedStamp = Stopwatch.GetTimestamp();
                 if (_recovering && target - selected.Timeline <= VideoSchedulingPolicy.BufferWindow + _frameDuration)
                 {
                     _recovering = false;
@@ -243,6 +244,7 @@ internal sealed partial class PlaybackSession : IDisposable
     private void RestartLocked(double position, bool recovery = false)
     {
         _generation++;
+        if (_recovering && !recovery) _recoveryMessage = null;
         _recovering = recovery;
         _requestedPosition = Math.Max(0, position);
         while (_ready.TryDequeue(out var frame)) RetireLocked(frame.Frame);

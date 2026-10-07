@@ -218,12 +218,13 @@ internal sealed partial class PlaybackSession
         using var audioPackets = new PacketQueue();
         using var cycleLifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         var cycleToken = cycleLifetime.Token;
+        var videoPreroll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         demux.SetCancellation(cycleToken);
         var raw = Channel.CreateBounded<NativeVideoFrame>(new BoundedChannelOptions(VideoSchedulingPolicy.RawFrameLimit)
         { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
         var videoLead = VideoSchedulingPolicy.BufferWindow + (video?.DelayFrames ?? 0) * _frameDuration;
-        var io = Io(() => { Demux(demux, video?.StreamIndex ?? -1, audio?.StreamIndex ?? -1, videoPackets, audioPackets, offset, videoLead, cycleToken); return true; }, cycleToken);
-        var decode = video is null ? Task.FromResult(0d) : DecodeVideo(video, videoPackets, raw.Writer, minimum, cycleToken);
+        var io = Io(() => { Demux(demux, video?.StreamIndex ?? -1, audio?.StreamIndex ?? -1, videoPackets, audioPackets, offset, videoLead, videoPreroll.Task, cycleToken); return true; }, cycleToken);
+        var decode = video is null ? Task.FromResult(0d) : DecodeVideo(video, videoPackets, raw.Writer, minimum, videoPreroll, cycleToken);
         var convert = video is null ? Task.CompletedTask : ConvertVideo(request, video, raw.Reader, offset, cycleToken);
         var sound = audio is null ? Task.FromResult(0d) : DecodeAudio(request, audio, audioPackets, offset, cycleToken);
         var tasks = new Task[] { io, decode, convert, sound };
@@ -240,7 +241,7 @@ internal sealed partial class PlaybackSession
     }
 
     private unsafe void Demux(FFmpegDemuxContext demux, int videoIndex, int audioIndex,
-        PacketQueue video, PacketQueue audio, double offset, double videoLead, CancellationToken token)
+        PacketQueue video, PacketQueue audio, double offset, double videoLead, Task videoPreroll, CancellationToken token)
     {
         var discontinuity = false;
         try
@@ -276,7 +277,7 @@ internal sealed partial class PlaybackSession
                         if (timestamp != ffmpeg.AV_NOPTS_VALUE && timeBase.den > 0)
                         {
                             var timeline = timestamp * (double)timeBase.num / timeBase.den - demux.OriginSeconds + offset;
-                            WaitForReadAhead(timeline, videoLead, token);
+                            WaitForReadAhead(timeline, videoLead, videoPreroll, token);
                         }
                     }
                     if (queue == audio && videoIndex >= 0)
@@ -305,9 +306,11 @@ internal sealed partial class PlaybackSession
     }
 
     // Runs on the dedicated I/O owner, so waiting here never consumes a decode worker.
-    private void WaitForReadAhead(double timeline, double lead, CancellationToken token)
+    private void WaitForReadAhead(double timeline, double lead, Task videoPreroll, CancellationToken token)
     {
-        while (!_clock.Waiting)
+        // Selecting the containing seek frame can require the next timestamp, even when
+        // it lies beyond normal read-ahead (low/variable FPS). Queues still bound this work.
+        while (videoPreroll.IsCompleted && !_clock.Waiting)
         {
             token.ThrowIfCancellationRequested();
             var wake = _wake.Next;
@@ -321,7 +324,7 @@ internal sealed partial class PlaybackSession
     }
 
     private async Task<double> DecodeVideo(FFmpegVideoDecoder decoder, PacketQueue packets,
-        ChannelWriter<NativeVideoFrame> output, double minimum, CancellationToken token)
+        ChannelWriter<NativeVideoFrame> output, double minimum, TaskCompletionSource videoPreroll, CancellationToken token)
     {
         NativeVideoFrame? preroll = null;
         var pastPreroll = false;
@@ -344,6 +347,7 @@ internal sealed partial class PlaybackSession
                 if (!pastPreroll)
                 {
                     pastPreroll = true;
+                    videoPreroll.TrySetResult();
                     if (preroll is not null)
                     {
                         var previous = preroll; preroll = null;
@@ -373,7 +377,7 @@ internal sealed partial class PlaybackSession
             }
             return end;
         }
-        finally { preroll?.Dispose(); output.TryComplete(); }
+        finally { videoPreroll.TrySetResult(); preroll?.Dispose(); output.TryComplete(); }
     }
 
     private async Task ConvertVideo(Request request, FFmpegVideoDecoder decoder, ChannelReader<NativeVideoFrame> raw,
@@ -388,30 +392,8 @@ internal sealed partial class PlaybackSession
                 {
                     token.ThrowIfCancellationRequested();
                     var wake = _wake.Next;
-                    var target = _clock.Position;
-                    bool preview;
-                    bool progressNeeded;
-                    lock (_gate)
-                    {
-                        preview = VideoSchedulingPolicy.NeedsPreview(_preview, _presented, _ready.Count, _options.Play, _clock.Waiting);
-                        progressNeeded = VideoSchedulingPolicy.NeedsProgress(_ready.Count, _presented,
-                            Stopwatch.GetElapsedTime(_lastPresentedStamp).TotalSeconds, target, offset, _duration);
-                    }
-                    if (!preview)
-                    {
-                        while (raw.TryPeek(out var newer) && newer.Time + offset <= target)
-                        {
-                            if (!raw.TryRead(out newer)) break;
-                            frame.Dispose(); frame = newer;
-                            _diagnostics.FrameDropped();
-                        }
-                    }
-                    var expired = !preview && VideoSchedulingPolicy.IsExpired(frame.Time + offset, frame.Duration, target);
-                    if (expired && !progressNeeded)
-                    {
-                        _diagnostics.FrameDropped();
+                    if (!SelectVideoCandidate(request, raw, ref frame, offset, out var preview, out var target))
                         break;
-                    }
                     bool space;
                     lock (_gate)
                     {
@@ -427,14 +409,19 @@ internal sealed partial class PlaybackSession
                     }
                     var cpu = ResourceBudget.Cpu.Changed.Next;
                     var gpu = ResourceBudget.ForDevice(request.Video!.Device).Changed.Next;
-                    DecodedVideoFrame converted;
+                    DecodedVideoFrame? converted;
                     try
                     {
                         converted = await PlaybackWork.Run(() =>
                         {
+                            // Admission can take longer than a frame interval. Re-select only
+                            // after owning CPU/device access, before output allocation or upload.
+                            if (!SelectVideoCandidate(request, raw, ref frame, offset, out preview, out target))
+                                return null;
+                            var late = !preview && VideoSchedulingPolicy.IsLate(frame.Time + offset, frame.Duration, target);
                             var start = Stopwatch.GetTimestamp();
                             var value = decoder.Convert(frame);
-                            _diagnostics.ConversionCompleted(Stopwatch.GetTimestamp() - start, forcedProgress: expired);
+                            _diagnostics.ConversionCompleted(Stopwatch.GetTimestamp() - start, late);
                             return value;
                         }, token, device: request.Video.Device).ConfigureAwait(false);
                     }
@@ -447,6 +434,7 @@ internal sealed partial class PlaybackSession
                         continue;
                     }
                     _diagnostics.ResourceAvailable();
+                    if (converted is null) break;
                     lock (_gate)
                     {
                         if (request.Generation != _generation || token.IsCancellationRequested) RetireLocked(converted);
@@ -462,6 +450,38 @@ internal sealed partial class PlaybackSession
             }
             finally { frame.Dispose(); }
         }
+    }
+
+    private bool SelectVideoCandidate(Request request, ChannelReader<NativeVideoFrame> raw,
+        ref NativeVideoFrame frame, double offset, out bool preview, out double target)
+    {
+        target = _clock.Position;
+        lock (_gate)
+        {
+            preview = VideoSchedulingPolicy.NeedsPreview(_preview, _presented, _ready.Count, _options.Play, _clock.Waiting);
+            if (request.Generation != _generation) return false;
+        }
+        if (!preview)
+        {
+            while (raw.TryPeek(out var newer) && newer.Time + offset <= target)
+            {
+                if (!raw.TryRead(out newer)) break;
+                frame.Dispose();
+                frame = newer;
+                _diagnostics.FrameDropped();
+            }
+        }
+        lock (_gate)
+        {
+            if (request.Generation != _generation) return false;
+            if (!preview && VideoSchedulingPolicy.IsObsolete(frame.Time + offset,
+                _presented ? _presentedTimeline : null, target, offset, _duration))
+            {
+                _diagnostics.FrameDropped();
+                return false;
+            }
+        }
+        return true;
     }
 
     private async Task<double> DecodeAudio(Request request, FFmpegAudioDecoder decoder, PacketQueue packets,

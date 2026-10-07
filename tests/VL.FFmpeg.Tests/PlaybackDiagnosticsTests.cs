@@ -11,14 +11,14 @@ public sealed class PlaybackDiagnosticsTests
     {
         var diagnostics = new PlaybackDiagnostics();
         diagnostics.DecodeCompleted(Stopwatch.Frequency / 10);
-        diagnostics.ConversionCompleted(Stopwatch.Frequency / 5, forcedProgress: true);
+        diagnostics.ConversionCompleted(Stopwatch.Frequency / 5, late: true);
         var snapshot = diagnostics.Capture();
         diagnostics.DecodeCompleted(Stopwatch.Frequency);
-        diagnostics.ConversionCompleted(Stopwatch.Frequency / 20, forcedProgress: false);
+        diagnostics.ConversionCompleted(Stopwatch.Frequency / 20, late: false);
         Assert.That(snapshot.MaxDecodeMilliseconds, Is.EqualTo(100));
         Assert.That(snapshot.MaxConvertMilliseconds, Is.EqualTo(200));
         Assert.That(snapshot.Metrics.Conversions, Is.EqualTo(1));
-        Assert.That(snapshot.ProgressFrames, Is.EqualTo(1));
+        Assert.That(snapshot.LateConversions, Is.EqualTo(1));
         Assert.That(diagnostics.Capture().MaxDecodeMilliseconds, Is.EqualTo(1000));
     }
 

@@ -7,19 +7,19 @@ internal static class VideoSchedulingPolicy
     public const int RawFrameLimit = 2;
     public const double BufferWindow = .150;
     public const double TimestampTolerance = .001;
-    public const double ProgressInterval = .250;
 
     public static bool NeedsPreview(bool requested, bool presented, int readyCount, bool playing, bool waitingForStart)
         => requested && !presented && readyCount == 0 && (!playing || waitingForStart);
 
-    // Overload must still yield images, but never revive a cycle whose end is already behind the clock.
-    public static bool NeedsProgress(int readyCount, bool presented, double secondsSincePresentation,
+    // Lateness alone does not make the newest available image useless. Reject rollback
+    // and completed cycles; superseded candidates are replaced before conversion.
+    public static bool IsObsolete(double timestamp, double? displayedTimeline,
         double target, double cycleOffset, double duration)
-        => readyCount == 0 && (duration <= 0 || target < cycleOffset + duration)
-            && (!presented || secondsSincePresentation >= ProgressInterval);
+        => (displayedTimeline is { } shown && timestamp < shown - TimestampTolerance)
+            || (duration > 0 && target >= cycleOffset + duration);
 
-    // A bounded jitter window avoids alternating between catch-up and complete output starvation.
-    public static bool IsExpired(double timestamp, double duration, double target)
+    // Diagnostic threshold, not permission to discard the only useful image.
+    public static bool IsLate(double timestamp, double duration, double target)
         => duration > 0 && timestamp + duration + BufferWindow < target - TimestampTolerance;
 }
 

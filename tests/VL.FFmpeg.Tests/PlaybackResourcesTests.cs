@@ -103,6 +103,6 @@ public sealed class PlaybackResourcesTests
     [TestCase(1.170, false)]
     [TestCase(1.172, true)]
     [TestCase(100, true)]
-    public void DeadlineAllowsBoundedJitterButRejectsStaleContent(double now, bool expired)
-        => Assert.That(VideoSchedulingPolicy.IsExpired(1, .020, now), Is.EqualTo(expired));
+    public void LatenessMeasurementAllowsTheReadAheadWindow(double now, bool late)
+        => Assert.That(VideoSchedulingPolicy.IsLate(1, .020, now), Is.EqualTo(late));
 }

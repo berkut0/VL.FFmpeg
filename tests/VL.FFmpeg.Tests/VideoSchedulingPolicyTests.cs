@@ -31,14 +31,15 @@ public sealed class VideoSchedulingPolicyTests
     }
 
     [Test]
-    public void ProgressIsRateLimitedAndCannotReviveAnEndedCycle()
+    public void LateCandidatesRemainUsefulUntilSupersededOrTheirCycleEnds()
     {
-        Assert.That(VideoSchedulingPolicy.NeedsProgress(0, false, 0, 3, 0, 10), Is.True);
-        Assert.That(VideoSchedulingPolicy.NeedsProgress(0, true, .1, 3, 0, 10), Is.False);
-        Assert.That(VideoSchedulingPolicy.NeedsProgress(0, true, .25, 3, 0, 10), Is.True);
-        Assert.That(VideoSchedulingPolicy.NeedsProgress(1, true, 1, 3, 0, 10), Is.False);
-        Assert.That(VideoSchedulingPolicy.NeedsProgress(0, false, 1, 10, 0, 10), Is.False);
-        Assert.That(VideoSchedulingPolicy.NeedsProgress(0, true, 1, 11, 10, 10), Is.True);
+        Assert.That(VideoSchedulingPolicy.IsObsolete(.020, null, 3, 0, 10), Is.False);
+        Assert.That(VideoSchedulingPolicy.IsObsolete(.020, 0, 3, 0, 10), Is.False);
+        Assert.That(VideoSchedulingPolicy.IsObsolete(.020, .040, 3, 0, 10), Is.True);
+        Assert.That(VideoSchedulingPolicy.IsObsolete(9.9, null, 10, 0, 10), Is.True);
+        Assert.That(VideoSchedulingPolicy.IsObsolete(10.1, 9.9, 11, 10, 10), Is.False);
+        Assert.That(VideoSchedulingPolicy.IsObsolete(0, 0, 3, 0, 0), Is.False,
+            "Equal timestamps are allowed when a source has no useful timing metadata.");
     }
 
     [Test]

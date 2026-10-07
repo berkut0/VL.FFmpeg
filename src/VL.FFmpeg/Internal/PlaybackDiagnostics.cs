@@ -6,7 +6,7 @@ namespace VL.FFmpeg.Internal;
 internal sealed class PlaybackDiagnostics
 {
     private long _containerOpens, _seeks, _conversions, _droppedFrames, _resourceWaits;
-    private long _progressFrames, _audioGaps, _readTicks, _decodeTicks, _convertTicks;
+    private long _lateConversions, _audioGaps, _readTicks, _decodeTicks, _convertTicks;
     private int _resourceBlocked;
     // Only the demux owner writes these moving averages.
     private double _recentReadTicks, _recentPacketBytes;
@@ -22,7 +22,7 @@ internal sealed class PlaybackDiagnostics
     public bool ResourceBlocked => Volatile.Read(ref _resourceBlocked) != 0;
 
     public PlaybackDiagnosticSnapshot Capture() => new(
-        Metrics, Interlocked.Read(ref _progressFrames), Interlocked.Read(ref _audioGaps),
+        Metrics, Interlocked.Read(ref _lateConversions), Interlocked.Read(ref _audioGaps),
         Milliseconds(Interlocked.Read(ref _readTicks)),
         Milliseconds(Interlocked.Read(ref _decodeTicks)),
         Milliseconds(Interlocked.Read(ref _convertTicks)),
@@ -36,10 +36,10 @@ internal sealed class PlaybackDiagnostics
     public void DecodeCompleted(long elapsedTicks) => Maximum(ref _decodeTicks, elapsedTicks);
     public void ReadCompleted(long elapsedTicks) => Maximum(ref _readTicks, elapsedTicks);
 
-    public void ConversionCompleted(long elapsedTicks, bool forcedProgress)
+    public void ConversionCompleted(long elapsedTicks, bool late)
     {
         Interlocked.Increment(ref _conversions);
-        if (forcedProgress) Interlocked.Increment(ref _progressFrames);
+        if (late) Interlocked.Increment(ref _lateConversions);
         Maximum(ref _convertTicks, elapsedTicks);
     }
 
@@ -80,7 +80,7 @@ internal sealed class PlaybackDiagnostics
                 + $"recent video read {s.RecentReadMilliseconds:F1} ms/{s.RecentPacketMiB:F2} MiB; "
                 + $"resource waits {s.Metrics.ResourceWaits}; audio underruns {audioUnderruns}; "
                 + $"open/seek {s.Metrics.ContainerOpens}/{s.Metrics.Seeks}; converted {s.Metrics.Conversions}; "
-                + $"progress frames {s.ProgressFrames}; audio gaps {s.AudioGaps}.";
+                + $"late conversions {s.LateConversions}; audio gaps {s.AudioGaps}.";
         }
         if (refresh || _description != description || _recovery != recovery)
         {
@@ -108,6 +108,6 @@ internal sealed class PlaybackDiagnostics
 internal readonly record struct PlaybackMetrics(long ContainerOpens, long Seeks, long Conversions,
     long DroppedBeforeConversion, long ResourceWaits);
 
-internal readonly record struct PlaybackDiagnosticSnapshot(PlaybackMetrics Metrics, long ProgressFrames,
+internal readonly record struct PlaybackDiagnosticSnapshot(PlaybackMetrics Metrics, long LateConversions,
     long AudioGaps, double MaxReadMilliseconds, double MaxDecodeMilliseconds, double MaxConvertMilliseconds,
     double RecentReadMilliseconds, double RecentPacketMiB);

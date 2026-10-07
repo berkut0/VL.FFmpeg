@@ -14,6 +14,56 @@ namespace VL.FFmpeg.Tests;
 
 public sealed unsafe class D3D11HardwareTests
 {
+    [TestCase(false)]
+    [TestCase(true)]
+    [Platform("Win")]
+    public void HeldTextureSurvivesCodecChangeAndSourceShutdown(bool linear)
+    {
+        var filename = MediaFixtures.Video();
+        var result = CreateD3D11Device(out var device, out var immediateContext);
+        if (result < 0 || device == 0) Assert.Ignore("No hardware D3D11 device is available.");
+        try
+        {
+            using var source = new VideoPlayerSource(FFmpegPlayerSessionFactory.Instance);
+            source.Open(filename, false);
+            using var session = ((IVideoSource2)source).Start(new VideoPlaybackContext(new ManualClock(),
+                NullLogger.Instance, () => device, GraphicsDeviceType.Direct3D11, linear))!;
+            using var held = WaitTextureFrame(session);
+            Assert.That(held.Resource.TryGetTexture(out var original), Is.True);
+
+            source.Open(Path.Combine(MediaFixtures.Root, "tests", "VL.FFmpeg.Tests", "TestData", "vp9-alpha.webm"), false);
+            using var changed = WaitTextureFrame(session);
+            Assert.That(changed.Resource.TryGetTexture(out var next), Is.True);
+            Assert.That(next.NativePointer, Is.Not.EqualTo(original.NativePointer));
+            Assert.That(next.Width, Is.EqualTo(32));
+            Assert.That(next.Height, Is.EqualTo(32));
+            ((IDisposable)source).Dispose();
+
+            var heldDescription = VL.FFmpeg.Internal.Interop.D3D11Interop.GetDescription(
+                (VL.FFmpeg.Interop.AutoGen.ID3D11Texture2D*)original.NativePointer);
+            Assert.That(heldDescription.Width, Is.EqualTo((uint)original.Width));
+            Assert.That(heldDescription.Height, Is.EqualTo((uint)original.Height));
+        }
+        finally
+        {
+            if (immediateContext != 0) Marshal.Release(immediateContext);
+            if (device != 0) Marshal.Release(device);
+        }
+    }
+
+    private static IResourceHandle<VideoFrame> WaitTextureFrame(IVideoPlayer session)
+    {
+        var timeout = System.Diagnostics.Stopwatch.StartNew();
+        while (timeout.ElapsedMilliseconds < 3000)
+        {
+            var provider = session.GrabVideoFrame();
+            if (provider is not null) return provider.GetHandle();
+            Thread.Sleep(2);
+        }
+        Assert.Fail("No video frame was delivered.");
+        return null!;
+    }
+
     [Test]
     public void HardwareModeRequiresAD3D11Consumer()
     {

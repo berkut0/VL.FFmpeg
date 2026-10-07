@@ -25,7 +25,11 @@ video attachment. Audio demand is configured asynchronously. Both streams use
 one persistent `FFmpegDemuxContext`. Container I/O runs separately from the
 bounded CPU work admission in `PlaybackWork`; codec thread counts contribute
 to its concurrency budget; codecs without threading reserve one worker. Packet
-read-ahead follows the media clock with allowance for reorder/thread delay. GPU submission is serialized per consumer device.
+read-ahead follows the media clock with allowance for reorder/thread delay.
+Until video preroll finds its containing frame, only queue budgets limit reading:
+the next timestamp may lie beyond normal read-ahead at low or variable frame rates.
+Each loop cycle has its own preroll completion signal. GPU submission is serialized
+per consumer device.
 
 Read the core by responsibility:
 
@@ -33,7 +37,7 @@ Read the core by responsibility:
 | --- | --- |
 | `PlaybackSession` | Control generations, presentation state, worker coordination and safe retirement |
 | `MasterClock` | Execution-to-media time mapping |
-| `VideoSchedulingPolicy` / `RealtimeRecovery` | Preview, deadlines, progress intervals and recovery cooldown |
+| `VideoSchedulingPolicy` / `RealtimeRecovery` | Preview, frame usefulness, read-ahead and recovery cooldown |
 | `FFmpegDemuxContext` / decoders | Container I/O / codec state; decoders borrow the container |
 | `VideoFrameConverter` | Hardware, software-GPU and CPU conversion resources |
 | `PlaybackDiagnostics` | Atomic stage counters, immutable snapshots and cached status text |
@@ -42,7 +46,7 @@ Decoders accept packets and return frames; they never open, seek or read a file.
 The session disposes them before their borrowed demux. Tests feed these same
 codec primitives through `DecoderPump`; no alternate decoder loop ships in the library.
 
-Video packets -> codec -> two referenced `NativeVideoFrame` slots -> deadline
+Video packets -> codec -> two referenced `NativeVideoFrame` slots -> candidate
 selection -> `VideoFrameConverter` -> up to six leased frames -> Gamma.
 Audio packets -> codec/resampler -> bounded `AudioSampleBuffer` -> Gamma.
 
@@ -50,17 +54,22 @@ Audio packets -> codec/resampler -> bounded `AudioSampleBuffer` -> Gamma.
 the consumer frame clock through starvation. Audio-only playback uses monotonic
 time; attaching video preserves elapsed media time. Workers/audio extrapolate
 an atomic clock snapshot. Paused seek publishes the containing frame. Playing
-seek continues advancing from the command, and stale frames are discarded before
-conversion. The scheduler permits at most one 150 ms buffering window of
-recoverable lateness before rejecting an otherwise useful candidate. If no image
-has been delivered for 250 ms (or a seek has not yielded its first image), it
-converts the newest available candidate even if late. This bounded progress path
-prevents sustained decode/I/O overload from discarding all output forever. It
-does not revive frames beyond the current cycle's end or slow the media clock.
+seek continues advancing from the command. Before conversion the scheduler
+selects the newest due raw frame, replacing older candidates. It repeats that
+selection after CPU/device admission, because waiting may have made the original
+candidate obsolete. A late frame can still improve the displayed image: age
+alone never rejects the only useful candidate. Frames behind the displayed
+timeline or from a completed cycle are rejected; paused preview remains explicit.
+The 150 ms window bounds normal read-ahead and labels late conversions. Queues,
+worker admission and leases bound work; no separate periodic progress timer is
+needed. The media clock continues running through overload.
 Sustained lag over one second for 500 ms requests recovery seeking, limited to
 once per two seconds. Automatic recovery retains the displayed-image state and
 health history, so it can retry and does not latch `Buffering`. Its status message
 clears when a presented frame catches up.
+Pause holds the displayed image even if late producer results arrive below the
+frozen clock; an explicit paused seek may publish one preview. A manual request
+replacing realtime recovery also clears its diagnostic message.
 
 Seek and loop reuse the open container, codecs and compatible converters.
 Generation-scoped queues prevent cancelled work from publishing into a newer
@@ -105,7 +114,7 @@ sample-accurate hardware A/V sync is not claimed.
 `PlaybackOverload` includes late presentation and resource exhaustion. `Status`
 reports queue starvation, skipped frames, I/O/decode/conversion durations
 (maxima, including native video send and receive calls), recent video packet read
-time/size (exponential averages with weight 1/16), forced progress conversions,
+time/size (exponential averages with weight 1/16), late conversions,
 resource waits, audio gaps and container open/seek counts. Diagnostic text is
 refreshed at most four times per second; source/conversion metadata is cached.
 Stage maxima are independent observations; their sum is not reported as a frame's
@@ -175,12 +184,7 @@ regressions before adoption.
 transport, cancellation ownership, shared-container seek/loop, CPU/GPU color,
 alpha, frame leases, audio drain, budget reclamation and realtime dropping.
 
-The local comparison harness and JSON results are in `artifacts/realtime-refactor`
-(`comparison.json`; final warmed four-player pair: `warm-before.json` and
-`warm-window.json`). The targeted saturated case adds a one-second warmup before
-five seconds of measurement.
-It compares the original commit and the refactor on identical cached Y4M data:
-one 4K stream, four 4K streams, twelve 640x360 streams (three seconds each), plus
-40 warmed isolated 4K CPU conversions. This measures the headless software path,
-not Gamma renderer or compressed-codec throughput. Gamma/Skia/Stride/export and
-package validation still require the project owner's release checks.
+Measured results and test conditions are summarized in [PERFORMANCE.md](PERFORMANCE.md).
+Temporary tracing, benchmark executables and raw investigation logs are not part
+of the playback library. Gamma/Skia/Stride/export and package validation still
+require the project owner's release checks.
