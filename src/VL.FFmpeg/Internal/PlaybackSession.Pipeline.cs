@@ -211,98 +211,16 @@ internal sealed partial class PlaybackSession
             usesLinearColorspace: request.Video.Context.UsesLinearColorspace),
             reason => { lock (_gate) if (request.Generation == _generation) _recoveryMessage = $"Hardware fallback: {reason}"; });
 
-    private async Task<double> RunCycle(Request request, FFmpegDemuxContext demux,
+    private Task<double> RunCycle(Request request, FFmpegDemuxContext demux,
         FFmpegVideoDecoder? video, FFmpegAudioDecoder? audio, double minimum, double offset, CancellationToken token)
     {
-        using var videoPackets = new PacketQueue();
-        using var audioPackets = new PacketQueue();
-        using var cycleLifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
-        var cycleToken = cycleLifetime.Token;
-        var videoPreroll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        demux.SetCancellation(cycleToken);
-        var raw = Channel.CreateBounded<NativeVideoFrame>(new BoundedChannelOptions(VideoSchedulingPolicy.RawFrameLimit)
-        { SingleReader = true, SingleWriter = true, FullMode = BoundedChannelFullMode.Wait });
-        var videoLead = VideoSchedulingPolicy.BufferWindow + (video?.DelayFrames ?? 0) * _frameDuration;
-        var io = Io(() => { Demux(demux, video?.StreamIndex ?? -1, audio?.StreamIndex ?? -1, videoPackets, audioPackets, offset, videoLead, videoPreroll.Task, cycleToken); return true; }, cycleToken);
-        var decode = video is null ? Task.FromResult(0d) : DecodeVideo(video, videoPackets, raw.Writer, minimum, videoPreroll, cycleToken);
-        var convert = video is null ? Task.CompletedTask : ConvertVideo(request, video, raw.Reader, offset, cycleToken);
-        var sound = audio is null ? Task.FromResult(0d) : DecodeAudio(request, audio, audioPackets, offset, cycleToken);
-        var tasks = new Task[] { io, decode, convert, sound };
-        foreach (var task in tasks)
-            _ = task.ContinueWith(_ => { try { cycleLifetime.Cancel(); } catch (ObjectDisposedException) { } }, CancellationToken.None, TaskContinuationOptions.OnlyOnFaulted | TaskContinuationOptions.ExecuteSynchronously, TaskScheduler.Default);
-        try { await Task.WhenAll(tasks).ConfigureAwait(false); return Math.Max(decode.Result, sound.Result); }
-        catch
-        {
-            var failure = tasks.Select(t => t.Exception?.GetBaseException()).FirstOrDefault(e => e is not null && e is not OperationCanceledException);
-            if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
-            throw;
-        }
-        finally { while (raw.Reader.TryRead(out var frame)) frame.Dispose(); demux.SetCancellation(token); }
-    }
-
-    private unsafe void Demux(FFmpegDemuxContext demux, int videoIndex, int audioIndex,
-        PacketQueue video, PacketQueue audio, double offset, double videoLead, Task videoPreroll, CancellationToken token)
-    {
-        var discontinuity = false;
-        try
-        {
-            while (true)
-            {
-                token.ThrowIfCancellationRequested();
-                var pointer = ffmpeg.av_packet_alloc();
-                if (pointer is null) throw new OutOfMemoryException();
-                var started = Stopwatch.GetTimestamp();
-                var result = demux.Read(pointer);
-                var readTicks = Stopwatch.GetTimestamp() - started;
-                _diagnostics.ReadCompleted(readTicks);
-                if (result < 0)
-                {
-                    ffmpeg.av_packet_free(&pointer);
-                    token.ThrowIfCancellationRequested();
-                    if (result == ffmpeg.AVERROR_EOF) return;
-                    FFmpegDemuxContext.Check(result, "read media packet");
-                }
-                var packet = new NativePacket(pointer);
-                var transferred = false;
-                try
-                {
-                    var queue = packet.StreamIndex == videoIndex ? video : packet.StreamIndex == audioIndex ? audio : null;
-                    if (queue is null) continue;
-                    if (packet.Size > ResourceBudget.Cpu.Capacity) throw new InvalidDataException("A media packet exceeds the playback memory budget.");
-                    if (queue == video)
-                    {
-                        _diagnostics.VideoPacketRead(readTicks, packet.Size);
-                        var timestamp = pointer->dts != ffmpeg.AV_NOPTS_VALUE ? pointer->dts : pointer->pts;
-                        var timeBase = demux.Context->streams[videoIndex]->time_base;
-                        if (timestamp != ffmpeg.AV_NOPTS_VALUE && timeBase.den > 0)
-                        {
-                            var timeline = timestamp * (double)timeBase.num / timeBase.den - demux.OriginSeconds + offset;
-                            WaitForReadAhead(timeline, videoLead, videoPreroll, token);
-                        }
-                    }
-                    if (queue == audio && videoIndex >= 0)
-                    {
-                        packet.Discontinuity = discontinuity;
-                        transferred = queue.TryWrite(packet);
-                        if (!transferred) { queue.Clear(); discontinuity = true; _diagnostics.AudioDiscontinuity(); }
-                        else discontinuity = false;
-                    }
-                    else
-                    {
-                        while (!transferred)
-                        {
-                            token.ThrowIfCancellationRequested();
-                            var changed = queue.Changed.Next;
-                            var budget = ResourceBudget.Cpu.Changed.Next;
-                            transferred = queue.TryWrite(packet);
-                            if (!transferred) Task.WhenAny(changed, budget).WaitAsync(token).GetAwaiter().GetResult();
-                        }
-                    }
-                }
-                finally { if (!transferred) packet.Dispose(); }
-            }
-        }
-        finally { video.Complete(); audio.Complete(); }
+        var preroll = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var lead = VideoSchedulingPolicy.BufferWindow + (video?.DelayFrames ?? 0) * _frameDuration;
+        return MediaPipeline.RunAsync(demux, video?.StreamIndex ?? -1, audio?.StreamIndex ?? -1,
+            (packets, raw, ct) => DecodeVideo(video!, packets, raw, minimum, preroll, ct),
+            (raw, ct) => ConvertVideo(request, video!, raw, offset, ct),
+            (packets, ct) => DecodeAudio(request, audio!, packets, offset, ct),
+            (time, ct) => WaitForReadAhead(time + offset, lead, preroll.Task, ct), _diagnostics, token);
     }
 
     // Runs on the dedicated I/O owner, so waiting here never consumes a decode worker.
@@ -329,21 +247,11 @@ internal sealed partial class PlaybackSession
         NativeVideoFrame? preroll = null;
         var pastPreroll = false;
         var end = 0d;
-        async Task Receive()
+        async Task Publish(NativeVideoFrame frame)
         {
-            while (true)
-            {
-                var frame = await PlaybackWork.Run(() =>
-                {
-                    var start = Stopwatch.GetTimestamp();
-                    var value = decoder.ReceiveRaw();
-                    _diagnostics.DecodeCompleted(Stopwatch.GetTimestamp() - start);
-                    return value;
-                }, token, decoder.ThreadCount).ConfigureAwait(false);
-                if (frame is null) return;
                 end = Math.Max(end, frame.Time + frame.Duration);
                 if (!pastPreroll && frame.Time <= minimum)
-                { preroll?.Dispose(); preroll = frame; continue; }
+                { preroll?.Dispose(); preroll = frame; return; }
                 if (!pastPreroll)
                 {
                     pastPreroll = true;
@@ -357,18 +265,10 @@ internal sealed partial class PlaybackSession
                 }
                 try { await output.WriteAsync(frame, token).ConfigureAwait(false); }
                 catch { frame.Dispose(); throw; }
-            }
         }
         try
         {
-            while (true)
-            {
-                using var packet = await packets.Read(token).ConfigureAwait(false);
-                while (await PlaybackWork.Run(() => SendVideoTimed(decoder, packet), token, decoder.ThreadCount).ConfigureAwait(false) == ffmpeg.AVERROR(ffmpeg.EAGAIN))
-                    await Receive().ConfigureAwait(false);
-                await Receive().ConfigureAwait(false);
-                if (packet is null) break;
-            }
+            await MediaDecodePump.Video(decoder, packets, Publish, _diagnostics, token).ConfigureAwait(false);
             if (preroll is not null)
             {
                 var frame = preroll; preroll = null;
@@ -509,34 +409,13 @@ internal sealed partial class PlaybackSession
                 if (request.Video is null) _clock.Ready();
             }
         }
-        async Task Receive()
-        {
-            while (true)
-            {
-                var frame = await PlaybackWork.Run(decoder.Receive, token).ConfigureAwait(false);
-                if (frame is null) return;
-                await Publish(frame).ConfigureAwait(false);
-            }
-        }
         try
         {
-            while (true)
+            await MediaDecodePump.Audio(decoder, packets, Publish, packet =>
             {
-                using var packet = await packets.Read(token).ConfigureAwait(false);
                 if (packet?.Discontinuity == true)
                     decoder.Flush(TimeSpan.FromSeconds(Math.Max(0, _clock.Position - offset)), request.Audio!.Rate, request.Audio.Channels, token);
-                while (await PlaybackWork.Run(() => Send(decoder, packet), token).ConfigureAwait(false) == ffmpeg.AVERROR(ffmpeg.EAGAIN))
-                    await Receive().ConfigureAwait(false);
-                await Receive().ConfigureAwait(false);
-                if (packet is null) break;
-            }
-            var tail = await PlaybackWork.Run(() =>
-            {
-                var frames = new List<DecodedAudioFrame>();
-                decoder.FlushResampler(frame => { frames.Add(frame); return true; });
-                return frames;
             }, token).ConfigureAwait(false);
-            foreach (var frame in tail) await Publish(frame).ConfigureAwait(false);
         }
         catch (Exception e) when (e is not OperationCanceledException)
         {
@@ -556,23 +435,5 @@ internal sealed partial class PlaybackSession
         }, token);
 
     private static Task<T> Io<T>(Func<T> action, CancellationToken token)
-        => Task.Factory.StartNew(() => { token.ThrowIfCancellationRequested(); return action(); }, token, TaskCreationOptions.LongRunning, TaskScheduler.Default);
-    private int SendVideoTimed(FFmpegVideoDecoder decoder, NativePacket? packet)
-    {
-        var start = Stopwatch.GetTimestamp();
-        try { return Send(decoder, packet); }
-        finally { _diagnostics.DecodeCompleted(Stopwatch.GetTimestamp() - start); }
-    }
-    private static unsafe int Send(FFmpegVideoDecoder decoder, NativePacket? packet)
-    {
-        var result = decoder.SendPacket(packet is null ? null : packet.Pointer);
-        if (result != ffmpeg.AVERROR(ffmpeg.EAGAIN) && result != ffmpeg.AVERROR_EOF) FFmpegDemuxContext.Check(result, "send video packet");
-        return result;
-    }
-    private static unsafe int Send(FFmpegAudioDecoder decoder, NativePacket? packet)
-    {
-        var result = decoder.SendPacket(packet is null ? null : packet.Pointer);
-        if (result != ffmpeg.AVERROR(ffmpeg.EAGAIN) && result != ffmpeg.AVERROR_EOF) FFmpegDemuxContext.Check(result, "send audio packet");
-        return result;
-    }
+        => MediaPipeline.Io(action, token);
 }
