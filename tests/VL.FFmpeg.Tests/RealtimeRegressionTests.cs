@@ -49,10 +49,13 @@ public sealed class RealtimeRegressionTests
     public void ResamplerDeliversAllSamplesAtEndOfStream()
     {
         using var fixture = MediaFixtures.Wave(44100, 1);
-        using var decoder = new FFmpegAudioDecoder(fixture.Path, TimeSpan.Zero, 48000, 1,
-            CancellationToken.None, MediaFixtures.Runtime);
+        using var demux = new FFmpegDemuxContext(fixture.Path, CancellationToken.None, MediaFixtures.Runtime);
+        using var decoder = new FFmpegAudioDecoder(demux,
+            48000,
+            1,
+            CancellationToken.None);
         var count = 0;
-        decoder.Decode(frame => { count += frame.SampleCount; return true; });
+        DecoderPump.Decode(demux, decoder, frame => { count += frame.SampleCount; return true; });
         Assert.That(count, Is.EqualTo(48000));
     }
 
@@ -147,10 +150,11 @@ public sealed class RealtimeRegressionTests
     [Test]
     public void WarmCpuFramesDoNotAllocateFullPixelArrays()
     {
-        using var decoder = new FFmpegVideoDecoder(MediaFixtures.Video(), TimeSpan.Zero, CancellationToken.None, MediaFixtures.Runtime);
+        using var demux = new FFmpegDemuxContext(MediaFixtures.Video(), CancellationToken.None, MediaFixtures.Runtime);
+        using var decoder = new FFmpegVideoDecoder(demux, CancellationToken.None);
         var count = 0;
         long before = 0;
-        decoder.Decode(frame =>
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             using (var handle = frame.CreateProvider().GetHandle()) { }
             frame.Dispose();
@@ -241,15 +245,15 @@ public sealed class RealtimeRegressionTests
     {
         using var fixture = MediaFixtures.Wave(44100, 1);
         using var demux = new FFmpegDemuxContext(fixture.Path, CancellationToken.None, MediaFixtures.Runtime);
-        using var decoder = new FFmpegAudioDecoder(fixture.Path, TimeSpan.Zero, 48000, 1, CancellationToken.None, demux: demux);
+        using var decoder = new FFmpegAudioDecoder(demux, 48000, 1, CancellationToken.None);
         var count = 0;
-        decoder.Decode(frame => { count += frame.SampleCount; return true; });
+        DecoderPump.Decode(demux, decoder, frame => { count += frame.SampleCount; return true; });
         var field = typeof(FFmpegAudioDecoder).GetField("_swrContext", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
         var context = (nint)System.Reflection.Pointer.Unbox(field.GetValue(decoder)!);
         demux.Seek(TimeSpan.Zero);
         decoder.Flush(TimeSpan.Zero, 48000, 1, CancellationToken.None);
         Assert.That((nint)System.Reflection.Pointer.Unbox(field.GetValue(decoder)!), Is.EqualTo(context));
-        decoder.Decode(frame => { count += frame.SampleCount; return true; });
+        DecoderPump.Decode(demux, decoder, frame => { count += frame.SampleCount; return true; });
         Assert.That(count, Is.EqualTo(96000));
     }
 
@@ -284,7 +288,7 @@ public sealed class RealtimeRegressionTests
             var generation = (long)type.GetField("_generation", flags)!.GetValue(playback)!;
             var queue = type.GetField("_ready", flags)!.GetValue(playback)!;
             var frame = new CpuDecodedVideoFrame(new byte[16], 2, 2, TimeSpan.FromSeconds(5), (25, 1), "offset", false);
-            var ready = Activator.CreateInstance(type.GetNestedType("ReadyFrame", System.Reflection.BindingFlags.NonPublic)!, generation, 0L, 5d, frame);
+            var ready = Activator.CreateInstance(type.GetNestedType("ReadyFrame", System.Reflection.BindingFlags.NonPublic)!, generation, 5d, frame);
             queue.GetType().GetMethod("Enqueue")!.Invoke(queue, [ready]);
             ((MasterClock)type.GetField("_clock", flags)!.GetValue(playback)!).Ready();
         }

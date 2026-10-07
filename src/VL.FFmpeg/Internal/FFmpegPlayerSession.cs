@@ -4,7 +4,7 @@ using VL.Lib.Basics.Video;
 namespace VL.FFmpeg.Internal;
 
 /// <summary>Gamma video attachment; the source owns the shared media lifetime.</summary>
-internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
+internal sealed class FFmpegPlayerSession : IVideoPlayer
 {
     private readonly VideoPlayerSource _source;
     private readonly PlaybackSession _playback;
@@ -17,7 +17,6 @@ internal sealed class FFmpegPlayerSession : IVideoPlayer, IPlaybackOptionsSink
     }
     public IResourceProvider<VideoFrame>? GrabVideoFrame()
         => Volatile.Read(ref _disposed) == 0 ? _playback.GrabVideoFrame() : null;
-    public void OptionsChanged(PlaybackOptions options) => _playback.OptionsChanged(options);
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;

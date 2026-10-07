@@ -18,14 +18,12 @@ public sealed class FFmpegVideoDecoderTests
             "TestData",
             fixture);
         DecodedVideoFrame? decodedFrame = null;
-        using var decoder = new FFmpegVideoDecoder(
-            filename,
-            TimeSpan.Zero,
+        using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegVideoDecoder(demux,
             CancellationToken.None,
-            FindRepositoryRuntime(),
             decodeMode: decodeMode);
 
-        decoder.Decode(frame =>
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             decodedFrame = frame;
             return false;
@@ -53,14 +51,12 @@ public sealed class FFmpegVideoDecoderTests
             "TestData",
             "vp9-declared-alpha-without-payload.webm");
         DecodedVideoFrame? decodedFrame = null;
-        using var decoder = new FFmpegVideoDecoder(
-            filename,
-            TimeSpan.Zero,
+        using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegVideoDecoder(demux,
             CancellationToken.None,
-            FindRepositoryRuntime(),
             decodeMode: DecodeMode.Software);
 
-        decoder.Decode(frame =>
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             decodedFrame = frame;
             return false;
@@ -81,30 +77,31 @@ public sealed class FFmpegVideoDecoderTests
     }
 
     [Test]
-    public void SeekDiscardsKeyframePrerollBeforePublishing()
+    public void SeekRetainsRawPrerollForThePlaybackScheduler()
     {
         var filename = FindGammaReferenceClip();
         if (filename is null)
             Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
 
-        DecodedVideoFrame? firstFrame = null;
+        var timecodes = new List<double>();
         var seekPosition = TimeSpan.FromSeconds(0.5d);
-        using var decoder = new FFmpegVideoDecoder(
-            filename!,
-            seekPosition,
-            CancellationToken.None,
-            FindRepositoryRuntime());
+        using var demux = new FFmpegDemuxContext(filename!, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegVideoDecoder(demux,
+            CancellationToken.None);
+        demux.Seek(seekPosition);
+        decoder.Flush(seekPosition, CancellationToken.None);
 
-        decoder.Decode(frame =>
+        DecoderPump.DecodeRaw(demux, decoder, frame =>
         {
-            firstFrame = frame;
-            return false;
+            timecodes.Add(frame.Time);
+            Assert.That(frame.Duration, Is.GreaterThan(0));
+            return frame.Time + frame.Duration <= seekPosition.TotalSeconds;
         });
 
-        Assert.That(firstFrame, Is.Not.Null);
-        Assert.That(firstFrame!.Timecode,
-            Is.GreaterThanOrEqualTo(seekPosition - TimeSpan.FromMilliseconds(1)));
-        firstFrame.Dispose();
+        Assert.That(timecodes, Has.Count.GreaterThan(1), "The scheduler must receive preroll as well as the containing frame.");
+        Assert.That(timecodes, Is.Ordered);
+        Assert.That(timecodes[0], Is.LessThan(seekPosition.TotalSeconds));
+        Assert.That(timecodes[^1], Is.EqualTo(.480).Within(.001));
     }
 
     [Test]
@@ -115,13 +112,11 @@ public sealed class FFmpegVideoDecoderTests
             Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
 
         var frames = new List<DecodedVideoFrame>();
-        using var decoder = new FFmpegVideoDecoder(
-            filename!,
-            TimeSpan.Zero,
-            CancellationToken.None,
-            FindRepositoryRuntime());
+        using var demux = new FFmpegDemuxContext(filename!, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegVideoDecoder(demux,
+            CancellationToken.None);
 
-        decoder.Decode(frame =>
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             frames.Add(frame);
             return frames.Count < 4;
@@ -163,14 +158,12 @@ public sealed class FFmpegVideoDecoderTests
             Assert.Ignore("The Gamma VL.Video reference clip is not installed on this machine.");
 
         DecodedVideoFrame? decodedFrame = null;
-        using var decoder = new FFmpegVideoDecoder(
-            filename,
-            TimeSpan.Zero,
+        using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegVideoDecoder(demux,
             CancellationToken.None,
-            FindRepositoryRuntime(),
             usesLinearColorspace: true);
 
-        decoder.Decode(frame =>
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             decodedFrame = frame;
             return false;

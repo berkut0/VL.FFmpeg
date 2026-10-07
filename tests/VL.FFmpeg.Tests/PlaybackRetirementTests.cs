@@ -46,7 +46,7 @@ public sealed class PlaybackRetirementTests
             var queue = type.GetField("_ready", flags)!.GetValue(engine)!;
             var generation = (long)type.GetField("_generation", flags)!.GetValue(engine)!;
             var ready = Activator.CreateInstance(type.GetNestedType("ReadyFrame", BindingFlags.NonPublic)!,
-                generation, 0L, 1d, new BlockingFrame(entered, release));
+                generation, 1d, new BlockingFrame(entered, release));
             queue.GetType().GetMethod("Enqueue")!.Invoke(queue, [ready]);
         }
         var seek = Task.Run(() => source.Seek(1));

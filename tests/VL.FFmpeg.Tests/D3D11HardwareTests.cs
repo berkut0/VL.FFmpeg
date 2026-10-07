@@ -23,11 +23,9 @@ public sealed unsafe class D3D11HardwareTests
 
         Assert.Throws<FFmpegHardwareException>((Action)(() =>
         {
-            using var _ = new FFmpegVideoDecoder(
-                filename,
-                TimeSpan.Zero,
+            using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+            using var _ = new FFmpegVideoDecoder(demux,
                 CancellationToken.None,
-                FindRepositoryRuntime(),
                 DecodeMode.Hardware,
                 graphicsDevice: 0,
                 graphicsDeviceType: GraphicsDeviceType.None);
@@ -60,18 +58,16 @@ public sealed unsafe class D3D11HardwareTests
         IResourceProvider<VideoFrame>? secondProvider = null;
         try
         {
-            using (var decoder = new FFmpegVideoDecoder(
-                       filename,
-                       TimeSpan.Zero,
-                       CancellationToken.None,
-                       FindRepositoryRuntime(),
-                       DecodeMode.Hardware,
-                       graphicsDevice: device,
-                       graphicsDeviceType: GraphicsDeviceType.Direct3D11,
-                       usesLinearColorspace: false))
+            using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+            using (var decoder = new FFmpegVideoDecoder(demux,
+                CancellationToken.None,
+                DecodeMode.Hardware,
+                graphicsDevice: device,
+                graphicsDeviceType: GraphicsDeviceType.Direct3D11,
+                usesLinearColorspace: false))
             {
                 var decodedFrames = new List<DecodedVideoFrame>();
-                decoder.Decode(frame =>
+                DecoderPump.Decode(demux, decoder, frame =>
                 {
                     decodedFrames.Add(frame);
                     return decodedFrames.Count < 2;
@@ -124,21 +120,28 @@ public sealed unsafe class D3D11HardwareTests
         try
         {
             using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-            using var decoder = new FFmpegVideoDecoder(
-                filename,
-                TimeSpan.FromSeconds(0.5d),
+            using var demux = new FFmpegDemuxContext(filename, cancellation.Token, FindRepositoryRuntime());
+            using var decoder = new FFmpegVideoDecoder(demux,
                 cancellation.Token,
-                FindRepositoryRuntime(),
                 DecodeMode.Hardware,
                 graphicsDevice: device,
                 graphicsDeviceType: GraphicsDeviceType.Direct3D11);
+            demux.Seek(TimeSpan.FromSeconds(0.5d));
+            decoder.Flush(TimeSpan.FromSeconds(0.5d), cancellation.Token);
 
-            decoder.Decode(frame =>
+            var discarded = 0;
+            DecoderPump.DecodeRaw(demux, decoder, frame =>
             {
-                decodedFrame = frame;
+                if (frame.Time < .499d)
+                {
+                    discarded++;
+                    return true;
+                }
+                decodedFrame = decoder.Convert(frame);
                 return false;
-            });
+            }, cancellation.Token);
 
+            Assert.That(discarded, Is.GreaterThan(0));
             Assert.That(decodedFrame, Is.Not.Null);
             Assert.That(decodedFrame!.Timecode, Is.GreaterThanOrEqualTo(TimeSpan.FromSeconds(0.499d)));
         }
@@ -167,16 +170,14 @@ public sealed unsafe class D3D11HardwareTests
         DecodedVideoFrame? decodedFrame = null;
         try
         {
-            using var decoder = new FFmpegVideoDecoder(
-                filename,
-                TimeSpan.Zero,
+            using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+            using var decoder = new FFmpegVideoDecoder(demux,
                 CancellationToken.None,
-                FindRepositoryRuntime(),
                 DecodeMode.Hardware,
                 graphicsDevice: device,
                 graphicsDeviceType: GraphicsDeviceType.Direct3D11,
                 usesLinearColorspace: true);
-            decoder.Decode(frame =>
+            DecoderPump.Decode(demux, decoder, frame =>
             {
                 decodedFrame = frame;
                 return false;
@@ -214,16 +215,14 @@ public sealed unsafe class D3D11HardwareTests
         var decodedFrames = new List<DecodedVideoFrame>();
         try
         {
-            using var decoder = new FFmpegVideoDecoder(
-                filename,
-                TimeSpan.Zero,
+            using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+            using var decoder = new FFmpegVideoDecoder(demux,
                 CancellationToken.None,
-                FindRepositoryRuntime(),
                 DecodeMode.Software,
                 graphicsDevice: device,
                 graphicsDeviceType: GraphicsDeviceType.Direct3D11,
                 usesLinearColorspace: linearOutput);
-            decoder.Decode(frame =>
+            DecoderPump.Decode(demux, decoder, frame =>
             {
                 decodedFrames.Add(frame);
                 return decodedFrames.Count < 2;

@@ -7,7 +7,6 @@ internal readonly record struct PlaybackHealthSnapshot(
     long DroppedFrames,
     TimeSpan MaxQueueEmptyDuration,
     TimeSpan MaxPresentationLateness,
-    TimeSpan MaxProducerDuration,
     TimeSpan MaxQueueWaitDuration,
     bool IsQueueEmpty,
     bool IsPresentationLate);
@@ -24,7 +23,6 @@ internal sealed class PlaybackHealthTracker
     private double _queueEmptyStartedClockSeconds;
     private double _maxQueueEmptySeconds;
     private double _maxPresentationLatenessSeconds;
-    private TimeSpan _maxProducerDuration;
     private TimeSpan _maxQueueWaitDuration;
     private long _queueEmptyEvents;
     private long _presentationUnderruns;
@@ -71,12 +69,6 @@ internal sealed class PlaybackHealthTracker
         }
     }
 
-    public void ObserveProducerDuration(TimeSpan duration)
-    {
-        lock (_syncRoot)
-            _maxProducerDuration = Max(_maxProducerDuration, duration);
-    }
-
     public void ObserveQueueWaitDuration(TimeSpan duration)
     {
         lock (_syncRoot)
@@ -116,7 +108,6 @@ internal sealed class PlaybackHealthTracker
             MaxQueueEmptyDuration: TimeSpan.FromSeconds(_maxQueueEmptySeconds),
             MaxPresentationLateness: TimeSpan.FromSeconds(
                 _maxPresentationLatenessSeconds),
-            MaxProducerDuration: _maxProducerDuration,
             MaxQueueWaitDuration: _maxQueueWaitDuration,
             IsQueueEmpty: _queueEmpty,
             IsPresentationLate: _presentationLate);

@@ -32,7 +32,7 @@ internal abstract class DecodedVideoFrame : IDisposable
 
     public DecodePath DecodePath { get; }
 
-    public string DecodeStatus { get; internal set; }
+    public string DecodeStatus { get; }
 
     public abstract IResourceProvider<VideoFrame> CreateProvider();
 

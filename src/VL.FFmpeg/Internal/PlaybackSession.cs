@@ -8,16 +8,19 @@ using VL.Lib.Basics.Video;
 namespace VL.FFmpeg.Internal;
 
 /// <summary>One media lifetime shared by the video attachment and lazy audio demand.</summary>
-internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposable
+internal sealed partial class PlaybackSession : IDisposable
 {
+    // Protects commands and presentation state. Native codec/container calls belong to WorkerLoop;
+    // cancellation callbacks and resource retirement must run outside this lock.
     private readonly object _gate = new();
     private readonly VideoPlayerSource _source;
     private readonly CancellationTokenSource _lifetime = new();
-    private readonly AsyncPulse _wake = new();
-    private readonly AsyncPulse _commands = new();
+    private readonly AsyncPulse _wake = new(); // Timeline, queue capacity or request changed.
+    private readonly AsyncPulse _commands = new(); // Control worker has commands or retirement work.
     private readonly MasterClock _clock = new();
     private readonly Queue<ReadyFrame> _ready = new();
     private readonly Queue<IDisposable> _retired = new();
+    // Device references can retire only after the previous pipeline has stopped using them.
     private readonly List<VideoBinding> _retiredBindings = [];
     private readonly Task _worker;
     private readonly Task _controlWorker;
@@ -38,8 +41,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
     private double _position;
     private double _presentedTimeline;
     private long _lastPresentedStamp;
-    private double? _behindSince;
-    private double _lastRecovery = double.NegativeInfinity;
+    private readonly RealtimeRecovery _recovery = new();
     private bool _opening;
     private bool _ended;
     private bool _presented;
@@ -50,27 +52,8 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
     private Exception? _audioFault;
     private DecodePath _path;
     private string _description = "Waiting for media.";
-    private string _diagnosticText = "";
-    private string _statusMessage = "";
-    private string? _statusDescription;
-    private string? _statusRecovery;
-    private long _lastDiagnosticStamp;
-    private long _droppedBeforeConvert;
-    private long _resourceWaits;
-    private int _resourceBlocked;
-    private long _containerOpens;
-    private long _seeks;
-    private long _conversions;
-    private long _starvationConversions;
-    private long _audioDiscontinuities;
-    public PlaybackMetrics Metrics => new(Interlocked.Read(ref _containerOpens), Interlocked.Read(ref _seeks),
-        Interlocked.Read(ref _conversions), Interlocked.Read(ref _droppedBeforeConvert), Interlocked.Read(ref _resourceWaits));
-    private long _ioTicks;
-    // Written only by the demux owner; recent samples expose cache/storage changes.
-    private double _recentVideoReadTicks;
-    private double _recentVideoPacketBytes;
-    private long _decodeTicks;
-    private long _convertTicks;
+    private readonly PlaybackDiagnostics _diagnostics = new();
+    public PlaybackMetrics Metrics => _diagnostics.Metrics;
     private string? _recoveryMessage;
     private bool _recovering;
 
@@ -157,7 +140,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
             ReadyFrame? selected = null;
             var drained = 0;
             var forcePreview = _preview && !_options.Play;
-            while (_ready.TryPeek(out var frame) && (forcePreview || frame.Timeline <= target + .001))
+            while (_ready.TryPeek(out var frame) && (forcePreview || frame.Timeline <= target + VideoSchedulingPolicy.TimestampTolerance))
             {
                 _ready.Dequeue();
                 if (frame.Generation != _generation) { RetireLocked(frame.Frame); continue; }
@@ -176,7 +159,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
                 selected.Frame.Dispose();
                 _presented = true;
                 _lastPresentedStamp = Stopwatch.GetTimestamp();
-                if (_recovering && target - selected.Timeline <= VideoFrameDeadline.Window + _frameDuration)
+                if (_recovering && target - selected.Timeline <= VideoSchedulingPolicy.BufferWindow + _frameDuration)
                 {
                     _recovering = false;
                     _recoveryMessage = null;
@@ -185,18 +168,11 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
             var health = _health.Observe(seconds, target, selected?.Timeline, _ready.Count,
                 _frameDuration, drained, _options.Play && _presented && !_opening && _fault is null && !(_ended && target >= _duration));
             status = StatusLocked(health, target, drained > 1);
-            if (_options.Play && _presented && !_ended && target - _presentedTimeline > 1)
+            if (_recovery.ShouldSeek(seconds, target - _presentedTimeline, _options.Play && _presented && !_ended))
             {
-                _behindSince ??= seconds;
-                if (seconds - _behindSince >= .5 && seconds - _lastRecovery >= 2)
-                {
-                    _lastRecovery = seconds;
-                    _behindSince = null;
-                    _recoveryMessage = "Recovering to realtime.";
-                    RestartLocked(target, recovery: true);
-                }
+                _recoveryMessage = "Recovering to realtime.";
+                RestartLocked(target, recovery: true);
             }
-            else _behindSince = null;
         }
         _wake.Pulse();
         _source.PublishPlaybackStatus(this, status);
@@ -279,10 +255,10 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
         // The consumer still owns the last image during automatic catch-up.
         // Clearing this flag disables further recovery and can latch Buffering forever.
         if (!recovery) _presented = false;
-        _behindSince = null;
+        _recovery.ResetObservation();
         _fault = null;
         _audioFault = null;
-        Volatile.Write(ref _resourceBlocked, 0);
+        _diagnostics.ResourceAvailable();
         if (!recovery) _health = new();
         _commands.Pulse();
         _wake.Pulse();
@@ -298,35 +274,11 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
             : ended ? PlaybackPhase.Ended
             : !_options.Play ? PlaybackPhase.Paused
             : !active ? PlaybackPhase.Buffering : PlaybackPhase.Playing;
-        var stamp = Stopwatch.GetTimestamp();
-        if (_lastDiagnosticStamp == 0 || Stopwatch.GetElapsedTime(_lastDiagnosticStamp).TotalMilliseconds >= 250)
-        {
-            _lastDiagnosticStamp = stamp;
-            var metrics = Metrics;
-            _diagnosticText = $"Buffer {_ready.Count}/6; empty {health.QueueEmptyEvents}; late {health.PresentationUnderruns}; "
-                + $"dropped {health.DroppedFrames + Interlocked.Read(ref _droppedBeforeConvert)}; "
-                + $"max empty/late {health.MaxQueueEmptyDuration.TotalMilliseconds:F1}/{health.MaxPresentationLateness.TotalMilliseconds:F1} ms; "
-                + $"max producer/queue wait {health.MaxProducerDuration.TotalMilliseconds:F1}/{health.MaxQueueWaitDuration.TotalMilliseconds:F1} ms; "
-                + $"max I/O/decode/convert {Milliseconds(_ioTicks):F1}/{Milliseconds(_decodeTicks):F1}/{Milliseconds(_convertTicks):F1} ms; "
-                + $"recent video read {Volatile.Read(ref _recentVideoReadTicks) * 1000 / Stopwatch.Frequency:F1} ms/{Volatile.Read(ref _recentVideoPacketBytes) / 1048576:F2} MiB; "
-                + $"resource waits {Interlocked.Read(ref _resourceWaits)}; audio underruns {_audioBuffer?.Underruns ?? 0}; open/seek {metrics.ContainerOpens}/{metrics.Seeks}; converted {metrics.Conversions}; progress frames {Interlocked.Read(ref _starvationConversions)}; audio gaps {Interlocked.Read(ref _audioDiscontinuities)}.";
-        }
-        if (_lastDiagnosticStamp == stamp || _statusDescription != _description || _statusRecovery != _recoveryMessage)
-        {
-            _statusDescription = _description;
-            _statusRecovery = _recoveryMessage;
-            _statusMessage = $"{_description}. {_diagnosticText} {_recoveryMessage}";
-        }
+        var message = _diagnostics.Describe(_description, _recoveryMessage, health,
+            _ready.Count, _audioBuffer?.Underruns ?? 0);
         return new(phase, _path, _position, _duration, _options.Play && active && !ended,
-            ended, dropped || health.IsPresentationLate || Volatile.Read(ref _resourceBlocked) != 0,
-            _fault?.Message ?? _statusMessage);
-    }
-    private static double Milliseconds(long ticks) => ticks * 1000d / Stopwatch.Frequency;
-    private static void Maximum(ref long location, long value)
-    {
-        long previous;
-        do { previous = Interlocked.Read(ref location); if (value <= previous) return; }
-        while (Interlocked.CompareExchange(ref location, value, previous) != previous);
+            ended, dropped || health.IsPresentationLate || _diagnostics.ResourceBlocked,
+            _fault?.Message ?? message);
     }
 
     private void RetireLocked(IDisposable resource)
@@ -384,7 +336,7 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
     private sealed record AudioOutput(AudioFormat Format, AudioSampleBuffer Buffer)
     { public long NextTime = long.MinValue; }
     private sealed record Request(long Generation, PlaybackOptions Options, double Position, VideoBinding? Video, AudioFormat? Audio, bool Recovery);
-    private sealed record ReadyFrame(long Generation, long Cycle, double Timeline, DecodedVideoFrame Frame);
+    private sealed record ReadyFrame(long Generation, double Timeline, DecodedVideoFrame Frame);
 
     private sealed unsafe class VideoBinding : IDisposable
     {
@@ -399,5 +351,3 @@ internal sealed partial class PlaybackSession : IPlaybackOptionsSink, IDisposabl
         public void Dispose() { if (Device != 0) Interop.D3D11Interop.Release((void*)Device); }
     }
 }
-
-internal readonly record struct PlaybackMetrics(long ContainerOpens, long Seeks, long Conversions, long DroppedBeforeConversion, long ResourceWaits);

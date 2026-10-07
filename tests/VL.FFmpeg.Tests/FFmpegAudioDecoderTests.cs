@@ -13,14 +13,12 @@ public sealed class FFmpegAudioDecoderTests
             Assert.Ignore("The Gamma VL.Audio reference clip is not installed on this machine.");
 
         var frames = new List<DecodedAudioFrame>();
-        using var decoder = new FFmpegAudioDecoder(
-            filename,
-            TimeSpan.Zero,
+        using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegAudioDecoder(demux,
             sampleRate: 48_000,
             channelCount: 0,
-            CancellationToken.None,
-            FindRepositoryRuntime());
-        decoder.Decode(frame =>
+            CancellationToken.None);
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             frames.Add(frame);
             return frames.Count < 4;
@@ -48,14 +46,14 @@ public sealed class FFmpegAudioDecoderTests
 
         DecodedAudioFrame? firstFrame = null;
         var seekPosition = TimeSpan.FromSeconds(0.5d);
-        using var decoder = new FFmpegAudioDecoder(
-            filename,
-            seekPosition,
+        using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, FindRepositoryRuntime());
+        using var decoder = new FFmpegAudioDecoder(demux,
             sampleRate: 48_000,
             channelCount: 2,
-            CancellationToken.None,
-            FindRepositoryRuntime());
-        decoder.Decode(frame =>
+            CancellationToken.None);
+        demux.Seek(seekPosition);
+        decoder.Flush(seekPosition, 48_000, 2, CancellationToken.None);
+        DecoderPump.Decode(demux, decoder, frame =>
         {
             firstFrame = frame;
             return false;

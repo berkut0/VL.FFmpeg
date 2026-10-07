@@ -88,12 +88,11 @@ public sealed class PlaybackHealthTrackerTests
     }
 
     [Test]
-    public void TracksMaximumProducerAndQueueWaitDurations()
+    public void TracksMaximumQueueWaitDuration()
     {
         var tracker = new PlaybackHealthTracker();
-        tracker.ObserveProducerDuration(TimeSpan.FromMilliseconds(12d));
-        tracker.ObserveProducerDuration(TimeSpan.FromMilliseconds(8d));
         tracker.ObserveQueueWaitDuration(TimeSpan.FromMilliseconds(5d));
+        tracker.ObserveQueueWaitDuration(TimeSpan.FromMilliseconds(3d));
 
         var snapshot = tracker.Observe(
             0d,
@@ -106,7 +105,6 @@ public sealed class PlaybackHealthTrackerTests
 
         using (Assert.EnterMultipleScope())
         {
-            Assert.That(snapshot.MaxProducerDuration.TotalMilliseconds, Is.EqualTo(12d));
             Assert.That(snapshot.MaxQueueWaitDuration.TotalMilliseconds, Is.EqualTo(5d));
         }
     }

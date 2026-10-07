@@ -57,25 +57,7 @@ internal unsafe sealed class VideoFrameConverter : IDisposable
         var pixelFormat = (AVPixelFormat)frame->format;
         if (pixelFormat == AVPixelFormat.AV_PIX_FMT_D3D11)
         {
-            if (_texturePool is null)
-                throw new FFmpegHardwareException("D3D11VA selected without a GPU texture pool.");
-
-            if (!_texturePool.Matches(frame))
-            {
-                _texturePool.Dispose();
-                _texturePool = new D3D11TexturePool(_hardwareContext, _usesLinearColorspace);
-            }
-            var lease = _texturePool.Convert(
-                frame,
-                frameRate,
-                token,
-                out var hardwareStatus);
-            _decodeStatus = WithAlphaStatus(frame, hardwareStatus);
-            return new GpuDecodedVideoFrame(
-                lease,
-                timecode,
-                frameRate,
-                _decodeStatus);
+            return ConvertHardware(frame, timecode, frameRate, token);
         }
 
         if (_decodeMode == DecodeMode.Hardware)
@@ -97,6 +79,39 @@ internal unsafe sealed class VideoFrameConverter : IDisposable
         if (_usesLinearColorspace && color.IsHdr)
             throw new NotSupportedException("HDR tone mapping is not implemented for linear output.");
 
+        PrepareSoftwareConversion(frame, color);
+        return TryConvertSoftwareGpu(frame, timecode, frameRate, color, fallbackStatus, token)
+            ?? ConvertSoftwareCpu(frame, timecode, frameRate, color, fallbackStatus,
+                hardwareFallback: hardwareConfigured && !hardwareSelected);
+    }
+
+    private DecodedVideoFrame ConvertHardware(AVFrame* frame, TimeSpan timecode,
+        (int N, int D) frameRate, CancellationToken token)
+    {
+        if (_texturePool is null)
+            throw new FFmpegHardwareException("D3D11VA selected without a GPU texture pool.");
+
+        if (!_texturePool.Matches(frame))
+        {
+            _texturePool.Dispose();
+            _texturePool = new D3D11TexturePool(_hardwareContext, _usesLinearColorspace);
+        }
+        var lease = _texturePool.Convert(
+            frame,
+            frameRate,
+            token,
+            out var hardwareStatus);
+        _decodeStatus = WithAlphaStatus(frame, hardwareStatus);
+        return new GpuDecodedVideoFrame(
+            lease,
+            timecode,
+            frameRate,
+            _decodeStatus);
+    }
+
+    private void PrepareSoftwareConversion(AVFrame* frame, VideoColorInfo color)
+    {
+        var pixelFormat = (AVPixelFormat)frame->format;
         var key = ((int)pixelFormat, frame->width, frame->height, color);
         if (_softwareKey != key)
         {
@@ -107,6 +122,11 @@ internal unsafe sealed class VideoFrameConverter : IDisposable
             _cpuStatusKey = null;
             _softwareKey = key;
         }
+    }
+
+    private DecodedVideoFrame? TryConvertSoftwareGpu(AVFrame* frame, TimeSpan timecode,
+        (int N, int D) frameRate, VideoColorInfo color, string fallbackStatus, CancellationToken token)
+    {
         if (_graphicsDeviceType == GraphicsDeviceType.Direct3D11
             && _graphicsDevice != nint.Zero
             && _softwareGpuUnavailableReason is null)
@@ -147,7 +167,13 @@ internal unsafe sealed class VideoFrameConverter : IDisposable
                 _softwareGpuConverter = null;
             }
         }
+        return null;
+    }
 
+    private DecodedVideoFrame ConvertSoftwareCpu(AVFrame* frame, TimeSpan timecode,
+        (int N, int D) frameRate, VideoColorInfo color, string fallbackStatus, bool hardwareFallback)
+    {
+        var pixelFormat = (AVPixelFormat)frame->format;
         var outputPixelFormat = _usesLinearColorspace
             ? AVPixelFormat.AV_PIX_FMT_RGBA64LE
             : AVPixelFormat.AV_PIX_FMT_BGRA;
@@ -218,7 +244,7 @@ internal unsafe sealed class VideoFrameConverter : IDisposable
                 }
             }
 
-            var statusKey = ((int)pixelFormat, color, hardwareConfigured && !hardwareSelected, _softwareGpuUnavailableReason);
+            var statusKey = ((int)pixelFormat, color, hardwareFallback, _softwareGpuUnavailableReason);
             if (_cpuStatusKey != statusKey)
             {
                 var outputDescription = _usesLinearColorspace ? "linear RGBA16F" : "nonlinear BGRA8";

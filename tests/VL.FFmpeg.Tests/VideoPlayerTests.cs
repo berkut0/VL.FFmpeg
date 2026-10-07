@@ -128,7 +128,7 @@ public sealed class VideoPlayerTests
                 Assert.That(status, Does.Contain("late "));
                 Assert.That(status, Does.Contain("dropped "));
                 Assert.That(status, Does.Contain("max empty/late "));
-                Assert.That(status, Does.Contain("max producer/queue wait "));
+                Assert.That(status, Does.Contain("max queue wait "));
             }
         }
         finally

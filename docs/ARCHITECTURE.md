@@ -27,6 +27,21 @@ bounded CPU work admission in `PlaybackWork`; codec thread counts contribute
 to its concurrency budget; codecs without threading reserve one worker. Packet
 read-ahead follows the media clock with allowance for reorder/thread delay. GPU submission is serialized per consumer device.
 
+Read the core by responsibility:
+
+| Component | Owns |
+| --- | --- |
+| `PlaybackSession` | Control generations, presentation state, worker coordination and safe retirement |
+| `MasterClock` | Execution-to-media time mapping |
+| `VideoSchedulingPolicy` / `RealtimeRecovery` | Preview, deadlines, progress intervals and recovery cooldown |
+| `FFmpegDemuxContext` / decoders | Container I/O / codec state; decoders borrow the container |
+| `VideoFrameConverter` | Hardware, software-GPU and CPU conversion resources |
+| `PlaybackDiagnostics` | Atomic stage counters, immutable snapshots and cached status text |
+
+Decoders accept packets and return frames; they never open, seek or read a file.
+The session disposes them before their borrowed demux. Tests feed these same
+codec primitives through `DecoderPump`; no alternate decoder loop ships in the library.
+
 Video packets -> codec -> two referenced `NativeVideoFrame` slots -> deadline
 selection -> `VideoFrameConverter` -> up to six leased frames -> Gamma.
 Audio packets -> codec/resampler -> bounded `AudioSampleBuffer` -> Gamma.
@@ -54,6 +69,7 @@ stream offsets. Codec and resampler draining precede rewind; ready leases surviv
 it. Audio reconfiguration starts from execution time, never the producer tail.
 Commands invalidate generations immediately; a control worker delivers
 cancellation and retires queued resources outside the presentation lock.
+Consumer-device bindings retire separately, after their pipeline has stopped.
 Timed waits explicitly check cancellation even when a signal is already complete,
 and round positive sub-millisecond delays up to avoid spinning during pacing.
 
@@ -92,6 +108,8 @@ reports queue starvation, skipped frames, I/O/decode/conversion durations
 time/size (exponential averages with weight 1/16), forced progress conversions,
 resource waits, audio gaps and container open/seek counts. Diagnostic text is
 refreshed at most four times per second; source/conversion metadata is cached.
+Stage maxima are independent observations; their sum is not reported as a frame's
+production latency.
 
 The native runtime remains pinned to verified absolute paths. Relocated AutoGen
 is embedded in `VL.FFmpeg.dll`; Gamma imports only `VL.FFmpeg.Nodes`.

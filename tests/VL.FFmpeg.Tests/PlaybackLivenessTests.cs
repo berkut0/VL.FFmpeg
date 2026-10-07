@@ -21,9 +21,9 @@ public sealed class PlaybackLivenessTests
         var engine = source.GetPlayback();
         engine.Attach(new VideoPlaybackContext(new ManualClock(), NullLogger.Instance));
         Get<MasterClock>(engine, "_clock").Reset(3, true, waitForReady: false);
-        Set(engine, "_lastRecovery", double.PositiveInfinity);
         var filename = Path.Combine(MediaFixtures.Root, "tests", "VL.FFmpeg.Tests", "TestData", "vp9-alpha.webm");
-        using var decoder = new FFmpegVideoDecoder(filename, TimeSpan.Zero, CancellationToken.None, MediaFixtures.Runtime);
+        using var demux = new FFmpegDemuxContext(filename, CancellationToken.None, MediaFixtures.Runtime);
+        using var decoder = new FFmpegVideoDecoder(demux, CancellationToken.None);
 
         await ConvertOne(engine, source, decoder, 0);
         var first = engine.GrabVideoFrame();
@@ -51,9 +51,12 @@ public sealed class PlaybackLivenessTests
         Get<MasterClock>(engine, "_clock").Reset(2, true, waitForReady: false);
         Set(engine, "_presented", true);
         Set(engine, "_presentedTimeline", 0d);
-        Set(engine, "_behindSince", (double?)0d);
         Set(engine, "_duration", 100d);
+        var generation = Get<long>(engine, "_generation");
         engine.GrabVideoFrame();
+        clock.Time = 2.6;
+        engine.GrabVideoFrame();
+        Assert.That(Get<long>(engine, "_generation"), Is.GreaterThan(generation), "Sustained lag must actually request recovery.");
         Assert.That(Get<bool>(engine, "_presented"), Is.True,
             "Recovery must retain image availability; otherwise it disables recovery and reports permanent Buffering.");
     }
@@ -67,7 +70,7 @@ public sealed class PlaybackLivenessTests
         channel.Writer.TryWrite(Frame(time));
         channel.Writer.Complete();
         var task = (Task)typeof(PlaybackSession).GetMethod("ConvertVideo", Private)!.Invoke(engine,
-            [request, decoder, channel.Reader, 0d, 0L, CancellationToken.None])!;
+            [request, decoder, channel.Reader, 0d, CancellationToken.None])!;
         await task.WaitAsync(TimeSpan.FromSeconds(3));
     }
 

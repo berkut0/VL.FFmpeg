@@ -40,7 +40,6 @@ internal unsafe sealed class FFmpegDemuxContext : IDisposable
     }
 
     public void SetCancellation(CancellationToken token) => Volatile.Write(ref _isCancelled, () => token.IsCancellationRequested);
-    public int FindStream(AVMediaType type) => ffmpeg.av_find_best_stream(_context, type, -1, -1, null, 0);
     public int Read(AVPacket* packet) => ffmpeg.av_read_frame(_context, packet);
 
     public void Seek(TimeSpan position)

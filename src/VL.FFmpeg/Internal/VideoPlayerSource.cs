@@ -177,15 +177,9 @@ internal sealed class VideoPlayerSource : IVideoSource2, IAudioSource, IDisposab
 
     private void OptionsChanged(PlaybackOptions options)
     {
-        IPlaybackOptionsSink? sink;
         PlaybackSession? playback;
-        lock (_syncRoot)
-        {
-            sink = _currentSession as IPlaybackOptionsSink;
-            playback = _playback;
-        }
-        if (playback is not null) playback.OptionsChanged(options);
-        else sink?.OptionsChanged(options);
+        lock (_syncRoot) playback = _playback;
+        playback?.OptionsChanged(options);
     }
 
     internal void PublishStatus(IVideoPlayer session, PlaybackStatus status)

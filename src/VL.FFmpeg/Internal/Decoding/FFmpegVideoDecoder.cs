@@ -12,28 +12,25 @@ namespace VL.FFmpeg.Internal.Decoding;
 /// <remarks>
 /// This type deliberately has no playback clock or renderer knowledge. It is a
 /// synchronous worker primitive and must be called off the Gamma render thread.
+/// The caller owns the demux context and must keep it alive until this decoder is disposed.
 /// </remarks>
 internal unsafe sealed class FFmpegVideoDecoder : IDisposable
 {
     private CancellationToken _cancellationToken;
-    private FFmpegDemuxContext? _demux;
+    private readonly FFmpegDemuxContext _demux;
     private readonly VideoFrameConverter _converter;
-    private bool _ownsDemux;
     private readonly DecodeMode _decodeMode;
     private readonly nint _graphicsDevice;
     private readonly GraphicsDeviceType _graphicsDeviceType;
     private readonly bool _usesLinearColorspace;
     private readonly AVCodecContext_get_format _getFormatCallback;
-    private AVFormatContext* _formatContext;
     private AVCodecContext* _codecContext;
-    private AVPacket* _packet;
     private AVFrame* _frame;
     private AVBufferRef* _hardwareDeviceReference;
     private AVStream* _videoStream;
     private int _videoStreamIndex = -1;
     private bool _sourceDeclaresAlpha;
     private long _decodedFrameCount;
-    private TimeSpan _minimumTimecode;
     private string _decodeStatus = "Software BGRA8";
     private bool _hardwareConfigured;
     private bool _hardwareFormatOffered;
@@ -44,19 +41,14 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     public int DelayFrames => Math.Max(_codecContext->delay, _codecContext->has_b_frames) + Math.Max(0, _threadCount - 1);
 
     public FFmpegVideoDecoder(
-        string filename,
-        TimeSpan initialPosition,
+        FFmpegDemuxContext demux,
         CancellationToken cancellationToken,
-        string? nativeRuntimePath = null,
         DecodeMode decodeMode = DecodeMode.Software,
         nint graphicsDevice = default,
         GraphicsDeviceType graphicsDeviceType = GraphicsDeviceType.None,
-        bool usesLinearColorspace = false,
-        FFmpegDemuxContext? demux = null)
+        bool usesLinearColorspace = false)
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(filename);
-        if (initialPosition < TimeSpan.Zero)
-            throw new ArgumentOutOfRangeException(nameof(initialPosition));
+        ArgumentNullException.ThrowIfNull(demux);
 
         _cancellationToken = cancellationToken;
         _getFormatCallback = SelectPixelFormat;
@@ -65,13 +57,11 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         _graphicsDeviceType = graphicsDeviceType;
         _usesLinearColorspace = usesLinearColorspace;
         _converter = new VideoFrameConverter(graphicsDevice, graphicsDeviceType, usesLinearColorspace, decodeMode);
-        _minimumTimecode = initialPosition;
         _demux = demux;
-        _ownsDemux = demux is null;
 
         try
         {
-            MediaInfo = Open(filename, initialPosition, nativeRuntimePath);
+            MediaInfo = Open();
         }
         catch
         {
@@ -85,58 +75,6 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     public string DecodeStatus => _converter.Status ?? _decodeStatus;
 
     public bool HardwareConfigured => _hardwareConfigured;
-
-    /// <summary>
-    /// Decodes until EOF, cancellation, or until <paramref name="acceptFrame"/>
-    /// returns false. Returning false is a normal early stop. The callback owns
-    /// every frame it receives.
-    /// </summary>
-    public void Decode(Func<DecodedVideoFrame, bool> acceptFrame)
-    {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        ArgumentNullException.ThrowIfNull(acceptFrame);
-
-        while (true)
-        {
-            _cancellationToken.ThrowIfCancellationRequested();
-
-            var readResult = ffmpeg.av_read_frame(_formatContext, _packet);
-            if (readResult == ffmpeg.AVERROR_EOF)
-            {
-                DrainDecoder(acceptFrame);
-                return;
-            }
-
-            if (readResult < 0)
-            {
-                _cancellationToken.ThrowIfCancellationRequested();
-                Throw(readResult, "read the next packet");
-            }
-
-            try
-            {
-                if (_packet->stream_index != _videoStreamIndex)
-                    continue;
-
-                int sendResult;
-                while ((sendResult = ffmpeg.avcodec_send_packet(_codecContext, _packet)) == Again)
-                {
-                    if (!ReceiveFrames(acceptFrame))
-                        return;
-                }
-
-                if (sendResult < 0 && sendResult != ffmpeg.AVERROR_EOF)
-                    Throw(sendResult, "send a video packet to the decoder");
-
-                if (!ReceiveFrames(acceptFrame))
-                    return;
-            }
-            finally
-            {
-                ffmpeg.av_packet_unref(_packet);
-            }
-        }
-    }
 
     public void Dispose()
     {
@@ -154,13 +92,6 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _frame = frame;
         }
 
-        if (_packet is not null)
-        {
-            var packet = _packet;
-            ffmpeg.av_packet_free(&packet);
-            _packet = packet;
-        }
-
         if (_codecContext is not null)
         {
             var codecContext = _codecContext;
@@ -175,35 +106,28 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             _hardwareDeviceReference = hardwareDeviceReference;
         }
 
-        if (_ownsDemux) _demux?.Dispose();
-        _formatContext = null;
-
         // The codec stores the pixel-format callback as a native function pointer.
         GC.KeepAlive(_getFormatCallback);
     }
 
-    private FFmpegMediaInfo Open(
-        string filename,
-        TimeSpan initialPosition,
-        string? nativeRuntimePath)
+    private FFmpegMediaInfo Open()
     {
-        _demux ??= new FFmpegDemuxContext(filename, _cancellationToken, nativeRuntimePath);
-        _formatContext = _demux.Context;
+        var formatContext = _demux.Context;
 
         AVCodec* decoder = null;
         _videoStreamIndex = ffmpeg.av_find_best_stream(
-            _formatContext,
+            formatContext,
             AVMediaType.AVMEDIA_TYPE_VIDEO,
             -1,
             -1,
             &decoder,
             0);
-        Check(_videoStreamIndex, "find a video stream");
+        FFmpegDemuxContext.Check(_videoStreamIndex, "find a video stream");
 
         if (decoder is null)
             throw new NotSupportedException("FFmpeg did not provide a decoder for the selected video stream.");
 
-        _videoStream = _formatContext->streams[_videoStreamIndex];
+        _videoStream = formatContext->streams[_videoStreamIndex];
         if (_videoStream is null || _videoStream->codecpar is null)
             throw new InvalidDataException("The selected FFmpeg video stream has no codec parameters.");
 
@@ -215,7 +139,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         if (_codecContext is null)
             throw new OutOfMemoryException("FFmpeg could not allocate AVCodecContext.");
 
-        Check(
+        FFmpegDemuxContext.Check(
             ffmpeg.avcodec_parameters_to_context(_codecContext, _videoStream->codecpar),
             "copy video codec parameters");
         // Auto threading can retain too many UHD software frames; eight keeps
@@ -229,11 +153,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         var codecOpenResult = ffmpeg.avcodec_open2(_codecContext, decoder, null);
         if (codecOpenResult < 0 && _hardwareConfigured)
             ThrowHardware(codecOpenResult, "open the D3D11VA video decoder");
-        Check(codecOpenResult, "open the video decoder");
-
-        _packet = ffmpeg.av_packet_alloc();
-        if (_packet is null)
-            throw new OutOfMemoryException("FFmpeg could not allocate AVPacket.");
+        FFmpegDemuxContext.Check(codecOpenResult, "open the video decoder");
 
         _frame = ffmpeg.av_frame_alloc();
         if (_frame is null)
@@ -243,11 +163,8 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         if (frameRate.N == 0)
             frameRate = NormalizeFrameRate(_videoStream->r_frame_rate);
 
-        var duration = ReadDuration(_formatContext, _videoStream);
+        var duration = ReadDuration(formatContext, _videoStream);
         var codecParameters = _videoStream->codecpar;
-
-        if (initialPosition > TimeSpan.Zero && _ownsDemux)
-            _demux!.Seek(initialPosition);
 
         return new FFmpegMediaInfo(
             Width: codecParameters->width,
@@ -287,43 +204,6 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         var value = Marshal.PtrToStringUTF8((nint)entry->value);
         return !string.IsNullOrWhiteSpace(value) && value != "0";
     }
-
-    private bool ReceiveFrames(Func<DecodedVideoFrame, bool> acceptFrame)
-    {
-        while (true)
-        {
-            _cancellationToken.ThrowIfCancellationRequested();
-
-            var receiveResult = ffmpeg.avcodec_receive_frame(_codecContext, _frame);
-            if (receiveResult == Again || receiveResult == ffmpeg.AVERROR_EOF)
-                return true;
-            if (receiveResult < 0)
-                Throw(receiveResult, "receive a decoded video frame");
-
-            try
-            {
-                var timecode = ReadTimecode(_frame);
-                if (timecode + TimeSpan.FromMilliseconds(1) < _minimumTimecode)
-                {
-                    _decodedFrameCount++;
-                    continue;
-                }
-
-                var frame = ConvertFrame(_frame);
-                _decodedFrameCount++;
-                if (!acceptFrame(frame))
-                    return false;
-            }
-            finally
-            {
-                ffmpeg.av_frame_unref(_frame);
-            }
-        }
-    }
-
-    private DecodedVideoFrame ConvertFrame(AVFrame* frame, TimeSpan? explicitTimecode = null)
-        => _converter.Convert(frame, explicitTimecode ?? ReadTimecode(frame), MediaInfo.FrameRate,
-            _hardwareConfigured, _hardwareFormatSelected, _hardwareFormatOffered, _cancellationToken);
 
     private void ConfigureHardwareDecoder()
     {
@@ -442,16 +322,10 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         }
         else
         {
-            seconds = timestamp * ToDouble(_videoStream->time_base) - _demux!.OriginSeconds;
+            seconds = timestamp * ToDouble(_videoStream->time_base) - _demux.OriginSeconds;
         }
 
         return TimeSpan.FromSeconds(Math.Max(0d, seconds));
-    }
-
-    public void Seek(TimeSpan position)
-    {
-        _demux!.Seek(position);
-        Flush(position, _cancellationToken);
     }
 
     public int StreamIndex => _videoStreamIndex;
@@ -461,7 +335,6 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     {
         _cancellationToken = token;
         ffmpeg.avcodec_flush_buffers(_codecContext);
-        _minimumTimecode = position;
         _decodedFrameCount = MediaInfo.FrameRate.N > 0
             ? (long)(position.TotalSeconds * MediaInfo.FrameRate.N / MediaInfo.FrameRate.D) : 0;
     }
@@ -473,7 +346,7 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         _cancellationToken.ThrowIfCancellationRequested();
         var result = ffmpeg.avcodec_receive_frame(_codecContext, _frame);
         if (result == Again || result == ffmpeg.AVERROR_EOF) return null;
-        Check(result, "receive video frame");
+        FFmpegDemuxContext.Check(result, "receive video frame");
         try
         {
             var time = ReadTimecode(_frame).TotalSeconds;
@@ -485,22 +358,9 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         finally { ffmpeg.av_frame_unref(_frame); }
     }
 
-    public DecodedVideoFrame Convert(NativeVideoFrame frame) => ConvertFrame(frame.Frame, TimeSpan.FromSeconds(frame.Time));
-
-    private bool DrainDecoder(Func<DecodedVideoFrame, bool> acceptFrame)
-    {
-        int result;
-        while ((result = ffmpeg.avcodec_send_packet(_codecContext, null)) == Again)
-        {
-            if (!ReceiveFrames(acceptFrame))
-                return false;
-        }
-
-        if (result < 0 && result != Again && result != ffmpeg.AVERROR_EOF)
-            Throw(result, "drain the video decoder");
-
-        return ReceiveFrames(acceptFrame);
-    }
+    public DecodedVideoFrame Convert(NativeVideoFrame frame)
+        => _converter.Convert(frame.Frame, TimeSpan.FromSeconds(frame.Time), MediaInfo.FrameRate,
+            _hardwareConfigured, _hardwareFormatSelected, _hardwareFormatOffered, _cancellationToken);
 
     private static TimeSpan ReadDuration(AVFormatContext* formatContext, AVStream* stream)
     {
@@ -522,21 +382,4 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
         => rational.den == 0 ? 0d : rational.num / (double)rational.den;
 
     private static int Again => ffmpeg.AVERROR(ffmpeg.EAGAIN);
-
-    private static void Check(int result, string operation)
-    {
-        if (result < 0)
-            Throw(result, operation);
-    }
-
-    private static void Throw(int errorCode, string operation)
-    {
-        Span<byte> buffer = stackalloc byte[ffmpeg.AV_ERROR_MAX_STRING_SIZE];
-        fixed (byte* pointer = buffer)
-        {
-            ffmpeg.av_strerror(errorCode, pointer, (ulong)buffer.Length);
-            var message = Marshal.PtrToStringUTF8((nint)pointer) ?? "Unknown FFmpeg error";
-            throw new FFmpegDecodeException(operation, errorCode, message);
-        }
-    }
 }

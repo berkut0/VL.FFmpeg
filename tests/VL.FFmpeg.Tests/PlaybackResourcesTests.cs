@@ -78,7 +78,8 @@ public sealed class PlaybackResourcesTests
             stream.Write("YUV4MPEG2 W64 H32 F60:1 Ip A1:1 C420jpeg\nFRAME\n"u8);
             stream.Write(new byte[64 * 32 * 3 / 2]);
         }
-        using var decoder = new FFmpegVideoDecoder(file.Path, TimeSpan.Zero, CancellationToken.None, MediaFixtures.Runtime);
+        using var demux = new FFmpegDemuxContext(file.Path, CancellationToken.None, MediaFixtures.Runtime);
+        using var decoder = new FFmpegVideoDecoder(demux, CancellationToken.None);
         Assert.That(decoder.ThreadCount, Is.EqualTo(1), "Rawvideo has no codec workers to reserve.");
     }
 
@@ -103,5 +104,5 @@ public sealed class PlaybackResourcesTests
     [TestCase(1.172, true)]
     [TestCase(100, true)]
     public void DeadlineAllowsBoundedJitterButRejectsStaleContent(double now, bool expired)
-        => Assert.That(VideoFrameDeadline.IsExpired(1, .020, now), Is.EqualTo(expired));
+        => Assert.That(VideoSchedulingPolicy.IsExpired(1, .020, now), Is.EqualTo(expired));
 }
