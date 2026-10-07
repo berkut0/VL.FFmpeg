@@ -37,8 +37,8 @@ not decoded, playback continues opaque and `Status` reports the degradation.
 Auxiliary-layer and separate-track alpha are not combined.
 
 Known limitation: the bundled FFmpeg decoder can corrupt NotchLC alpha,
-producing blocky or incorrect transparency before frame conversion. Version
-1.0.4 does not fix this native decoder issue; see the
+producing blocky or incorrect transparency before frame conversion. The bundled
+native runtime does not include a fix; see the
 [upstream fix proposal](https://www.mail-archive.com/ffmpeg-devel@ffmpeg.org/msg189842.html).
 
 Use `VideoPlayer` for conventional pin-based transport. Use
