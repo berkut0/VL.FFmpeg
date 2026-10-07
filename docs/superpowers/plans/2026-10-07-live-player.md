@@ -11,24 +11,24 @@ no version bump or publication. Use the existing dedicated feature branch.
 
 ## Tasks
 
-- [ ] Extract `Internal/MediaPipeline.cs`: bounded queues, native I/O routing,
+- [x] Extract `Internal/MediaPipeline.cs`: bounded queues, native I/O routing,
   stage cancellation and join. `RunAsync` takes demux, stream indices and typed
   stage delegates. File pacing/preroll/presentation stay in PlaybackSession.
   Extract `MediaDecodePump` packet send/receive/drain, shared by both controllers.
   Run all existing file regressions before live changes.
-- [ ] Add `Decoding/MediaInputOptions.cs`: protocol options and monotonic open/read
+- [x] Add `Decoding/MediaInputOptions.cs`: protocol options and monotonic open/read
   deadlines; extend FFmpegDemuxContext with optional configuration. Tests use a
   stalled loopback HTTP server to prove interruption and cancellation.
-- [ ] Add `Internal/Live/LiveConnectionPolicy.cs` and `LiveTimeline.cs`. Test URL
+- [x] Add `Internal/Live/LiveConnectionPolicy.cs` and `LiveTimeline.cs`. Test URL
   validation, credential redaction, 1/2/4/8/10 retry delays, terminal errors,
   common A/V epoch, missing timestamps and backward/forward discontinuities.
   Preserve raw timestamp metadata from decoders without changing file outputs.
-- [ ] Add `LiveSession`, `LiveSource`, and `LiveVideoPlayer`: one connection owner,
+- [x] Add `LiveSession`, `LiveSource`, and `LiveVideoPlayer`: one connection owner,
   consumer attachment/demand, generation-safe output, transport commands and
   bounded video/audio publication. Reuse codecs, converter, budgets and workers.
   Test reconnect edge, unchanged inputs, disable during I/O, retained frames,
   strict Hardware, late audio attachment and URL replacement.
-- [ ] Run real HTTP/RTSP decode against controlled servers, HTTPS verification
+- [x] Run real HTTP/RTSP decode against controlled servers, HTTPS verification
   where a trusted endpoint is available; test stalled reads, EOF, reconnect,
   slow consumers and mixed file/live load. Run full Release suite and fresh
   code review. Update active architecture and record concrete validation limits.
@@ -44,3 +44,24 @@ no version bump or publication. Use the existing dedicated feature branch.
 Verification: `dotnet test tests/VL.FFmpeg.Tests/VL.FFmpeg.Tests.csproj -c Release`.
 New behavior gets a failing regression first; extraction uses existing regressions.
 Each task records its result here. Commit only verified stages; never push automatically.
+
+## Results
+
+- Baseline: 132 Release tests passed before extraction.
+- Shared pipeline, input deadlines and policies: 144 passed; commit a21511e.
+- Final suite: 164 passed, no build warnings. Explicit HTTPS smoke passed separately.
+  The existing explicit NotchLC decoder reproduction remains a known native failure.
+- Real loopback RTSP TCP/UDP: VP8 video and L16 audio; late audio and 48/44.1 kHz
+  reconfiguration use one connection and zero seeks. HTTP read/open cancellation,
+  EOF retries, strict Hardware, mixed file/live load and CPU/GPU leases covered.
+- Final review: fixed device lifetime using an independent run binding lease;
+  RunRetainsItsDeviceAfterConsumerBindingIsRetired verifies native ownership.
+- Final review: fixed small cross-track timestamp resets and missing audio PTS;
+  SmallBackwardResetRejectsOldAudioWithoutResettingTwice and
+  MissingAudioTimestampRejoinsAfterVideoReset failed first, then passed.
+- Implementation decision: retain optional raw SourceTime alongside established
+  file Timecode instead of changing existing file timestamp normalization.
+  This preserves file behavior; callers must distinguish source and presentation time.
+- Work remains on the dedicated feature branch in the existing development checkout.
+  No .vl access, native DLL replacement, package version bump or publication.
+- Gamma discovery, renderer integration and export remain owner validation.

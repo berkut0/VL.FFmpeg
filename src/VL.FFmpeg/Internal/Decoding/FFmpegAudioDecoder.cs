@@ -93,6 +93,10 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
             throw new InvalidDataException("FFmpeg returned audio without sample planes.");
 
         ConfigureResampler(frame);
+        var timestamp = frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE ? frame->best_effort_timestamp : frame->pts;
+        double? sourceTime = timestamp == ffmpeg.AV_NOPTS_VALUE ? null
+            : timestamp * ToDouble(_audioStream->time_base)
+                - ffmpeg.swr_get_delay(_swrContext, frame->sample_rate) / (double)frame->sample_rate;
         var outputCapacity = ffmpeg.swr_get_out_samples(_swrContext, frame->nb_samples);
         FFmpegDemuxContext.Check(outputCapacity, "calculate resampled audio capacity");
         outputCapacity = Math.Max(1, outputCapacity);
@@ -135,7 +139,7 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
             converted - sampleOffset,
             sampleOffset,
             OutputSampleRate,
-            timecode);
+            timecode) { SourceTime = sourceTime + sampleOffset / (double)OutputSampleRate };
     }
 
     private void ConfigureResampler(AVFrame* frame)
@@ -212,6 +216,19 @@ internal unsafe sealed class FFmpegAudioDecoder : IDisposable
     }
 
     public int StreamIndex => _audioStreamIndex;
+    // Called by the audio owner; neither a container seek nor a codec flush is needed.
+    public void ReconfigureOutput(int rate, int channels)
+    {
+        _requestedSampleRate = rate;
+        _requestedChannelCount = channels;
+        _nextOutputTime = null;
+        if (_swrContext is not null)
+        {
+            var context = _swrContext;
+            ffmpeg.swr_free(&context);
+            _swrContext = null;
+        }
+    }
     public int SendPacket(AVPacket* packet) => ffmpeg.avcodec_send_packet(_codecContext, packet);
     public DecodedAudioFrame? Receive()
     {

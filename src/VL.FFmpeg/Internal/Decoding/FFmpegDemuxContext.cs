@@ -57,6 +57,11 @@ internal unsafe sealed class FFmpegDemuxContext : IDisposable
     }
 
     public void SetCancellation(CancellationToken token) => Volatile.Write(ref _isCancelled, () => token.IsCancellationRequested);
+    public void Resume(CancellationToken token)
+    {
+        SetCancellation(token);
+        if (_context->pb is not null) { _context->pb->error = 0; _context->pb->eof_reached = 0; }
+    }
     public int Read(AVPacket* packet)
     {
         BeginOperation(_options?.ReadTimeout);

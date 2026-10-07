@@ -45,6 +45,13 @@ Use `VideoPlayer` for conventional pin-based transport. Use
 `VideoPlayer (Advanced Controls)` when separate parts of a patch need to call `Open`,
 `Play`, `Pause`, `Stop`, `Close` or `Seek` on the same player.
 
+Use `VideoPlayer (Live)` for RTSP or direct HTTP/HTTPS live sources. Set URL and
+Enabled; use the optional Reconnect bang to start a new connection. RTSP uses
+TCP by default, with optional UDP transport. Video and audio connect to the same
+standard Gamma consumers. Status reports connection, buffering and retry state.
+Network failures retry with a bounded allowance. The live node has no seek,
+loop or pause; HLS/DASH, SRT and DVR are outside its initial scope.
+
 ## Build
 
 ```powershell

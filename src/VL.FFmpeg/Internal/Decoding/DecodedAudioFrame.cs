@@ -6,7 +6,10 @@ internal sealed record DecodedAudioFrame(
     int SampleCount,
     int SampleOffset,
     int SampleRate,
-    TimeSpan Timecode);
+    TimeSpan Timecode)
+{
+    public double? SourceTime { get; init; }
+}
 
 internal sealed record FFmpegAudioMediaInfo(
     TimeSpan Duration,

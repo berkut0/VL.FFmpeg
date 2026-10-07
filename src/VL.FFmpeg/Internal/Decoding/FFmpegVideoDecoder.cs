@@ -353,7 +353,10 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
             var duration = _frame->duration > 0 ? _frame->duration * ToDouble(_videoStream->time_base)
                 : MediaInfo.FrameRate.N > 0 ? MediaInfo.FrameRate.D / (double)MediaInfo.FrameRate.N : 0;
             _decodedFrameCount++;
-            return new NativeVideoFrame(_frame, time, duration);
+            var timestamp = _frame->best_effort_timestamp != ffmpeg.AV_NOPTS_VALUE
+                ? _frame->best_effort_timestamp : _frame->pts;
+            double? sourceTime = timestamp == ffmpeg.AV_NOPTS_VALUE ? null : timestamp * ToDouble(_videoStream->time_base);
+            return new NativeVideoFrame(_frame, time, duration, sourceTime);
         }
         finally { ffmpeg.av_frame_unref(_frame); }
     }

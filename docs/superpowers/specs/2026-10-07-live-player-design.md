@@ -1,6 +1,6 @@
 # VideoPlayer (Live)
 
-Status: proposed design; no implementation yet.
+Status: implemented on feat/live-player; native protocol tests pass, owner Gamma validation remains.
 
 ## Intent
 
@@ -113,10 +113,9 @@ source type from incomplete metadata.
 
 ## Time and backpressure
 
-Preserve signed source timestamps until the session maps them. The current
-decoders normalize and clamp against container start time; moving this mapping
-to the pipeline boundary is necessary to recognize timestamp resets. File
-mapping must preserve existing outputs and preroll behavior.
+Preserve signed source timestamps until the live session maps them. Decoded
+frames carry optional SourceTime separately from their established file Timecode.
+This recognizes live timestamp resets while preserving file outputs and preroll.
 
 LiveTimeline uses one connection epoch for audio and video, preserving their
 relative offsets. Video establishes presentation when attached; audio cannot

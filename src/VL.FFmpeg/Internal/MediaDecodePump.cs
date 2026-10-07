@@ -28,9 +28,10 @@ internal static class MediaDecodePump
         }, publish, token, decoder.ThreadCount);
 
     public static async Task Audio(FFmpegAudioDecoder decoder, PacketQueue packets,
-        Func<DecodedAudioFrame, Task> publish, Action<NativePacket?> prepare, CancellationToken token)
+        Func<DecodedAudioFrame, Task> publish, Action<NativePacket?> prepare, CancellationToken token,
+        Func<bool>? enabled = null)
     {
-        await Run(packets, packet => { prepare(packet); return Send(decoder, packet); },
+        await Run(packets, packet => { prepare(packet); return enabled?.Invoke() != false ? Send(decoder, packet) : 0; },
             decoder.Receive, publish, token, 1).ConfigureAwait(false);
         var tail = await PlaybackWork.Run(() =>
         {

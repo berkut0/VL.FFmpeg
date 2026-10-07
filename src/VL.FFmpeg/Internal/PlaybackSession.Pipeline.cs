@@ -249,22 +249,22 @@ internal sealed partial class PlaybackSession
         var end = 0d;
         async Task Publish(NativeVideoFrame frame)
         {
-                end = Math.Max(end, frame.Time + frame.Duration);
-                if (!pastPreroll && frame.Time <= minimum)
-                { preroll?.Dispose(); preroll = frame; return; }
-                if (!pastPreroll)
+            end = Math.Max(end, frame.Time + frame.Duration);
+            if (!pastPreroll && frame.Time <= minimum)
+            { preroll?.Dispose(); preroll = frame; return; }
+            if (!pastPreroll)
+            {
+                pastPreroll = true;
+                videoPreroll.TrySetResult();
+                if (preroll is not null)
                 {
-                    pastPreroll = true;
-                    videoPreroll.TrySetResult();
-                    if (preroll is not null)
-                    {
-                        var previous = preroll; preroll = null;
-                        try { await output.WriteAsync(previous, token).ConfigureAwait(false); }
-                        catch { previous.Dispose(); frame.Dispose(); throw; }
-                    }
+                    var previous = preroll; preroll = null;
+                    try { await output.WriteAsync(previous, token).ConfigureAwait(false); }
+                    catch { previous.Dispose(); frame.Dispose(); throw; }
                 }
-                try { await output.WriteAsync(frame, token).ConfigureAwait(false); }
-                catch { frame.Dispose(); throw; }
+            }
+            try { await output.WriteAsync(frame, token).ConfigureAwait(false); }
+            catch { frame.Dispose(); throw; }
         }
         try
         {

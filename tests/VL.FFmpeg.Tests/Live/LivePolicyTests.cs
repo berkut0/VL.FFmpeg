@@ -61,4 +61,45 @@ public sealed class LivePolicyTests
         Assert.That(time.Map(null, .04, .005, true).Time, Is.EqualTo(.04).Within(.00001));
         Assert.That(time.Map(null, 0, .08, true).Time, Is.EqualTo(.08).Within(.00001));
     }
+
+    [Test]
+    public void OtherTrackCannotReintroduceAnOldEpoch()
+    {
+        var time = new LiveTimeline();
+        time.Map(100, .04, 0, true);
+        time.Map(100, .02, 0, false);
+        var reset = time.Map(0, .04, 1, true);
+        Assert.That(time.Map(100.1, .02, 1.01, false).Accepted, Is.False);
+        var joined = time.Map(.02, .02, 1.02, false);
+        Assert.That(joined.Epoch, Is.EqualTo(reset.Epoch));
+        Assert.That(joined.Time, Is.EqualTo(1.02).Within(.00001));
+    }
+
+    [Test]
+    public void SmallBackwardResetRejectsOldAudioWithoutResettingTwice()
+    {
+        var time = new LiveTimeline();
+        time.Map(100, .04, 0, true);
+        time.Map(100, .02, 0, false);
+        var reset = time.Map(99, .04, .04, true);
+        Assert.That(time.Map(100.02, .02, .05, false).Accepted, Is.False);
+        var joined = time.Map(99.04, .02, .08, false);
+        Assert.That(joined.Accepted, Is.True);
+        Assert.That(joined.Epoch, Is.EqualTo(reset.Epoch));
+        Assert.That(joined.Time, Is.EqualTo(.08).Within(.00001));
+    }
+
+    [Test]
+    public void MissingAudioTimestampRejoinsAfterVideoReset()
+    {
+        var time = new LiveTimeline();
+        time.Map(100, .04, 0, true);
+        time.Map(100, .02, 0, false);
+        var reset = time.Map(0, .04, 1, true);
+        var joined = time.Map(null, .02, 1.01, false);
+        Assert.That(joined.Accepted, Is.True);
+        Assert.That(joined.Epoch, Is.EqualTo(reset.Epoch));
+        Assert.That(joined.Time, Is.EqualTo(1.01).Within(.00001));
+        Assert.That(time.Map(null, .02, 1.03, false).Time, Is.EqualTo(1.03).Within(.00001));
+    }
 }

@@ -39,6 +39,7 @@ Read the core by responsibility:
 | `MasterClock` | Execution-to-media time mapping |
 | `VideoSchedulingPolicy` / `RealtimeRecovery` | Preview, frame usefulness, read-ahead and recovery cooldown |
 | `FFmpegDemuxContext` / decoders | Container I/O / codec state; decoders borrow the container |
+| `MediaPipeline` / `MediaDecodePump` | Bounded packet routing, codec pumping, cancellation and joining shared by file and live sessions |
 | `VideoFrameConverter` | Hardware, software-GPU and CPU conversion resources |
 | `PlaybackDiagnostics` | Atomic stage counters, immutable snapshots and cached status text |
 
@@ -161,6 +162,48 @@ updated runtime hashes/provenance and the normal package/Gamma release checks.
 This synthetic reproduction establishes a decoder defect; attributing a user's
 particular visual artifact still requires their file or a reference image.
 
+## Live sources
+
+`VideoPlayer (Live)` accepts RTSP and direct HTTP/HTTPS streams. Its inputs are
+URL and Enabled, with optional Reconnect (rising edge), Decode Mode and RTSP
+Transport (TCP by default, or UDP). Outputs use the same Gamma video/audio
+consumers, with a separate LivePlaybackPhase and cached Status. No file seek,
+loop, duration or pause API is exposed.
+
+`Internal/Live/` owns source attachments, connection lifecycle, retry and live
+time mapping. The file controller does not depend on it. Both controllers use
+MediaPipeline/MediaDecodePump, the existing codecs, converter, pools and worker
+budgets. Native frames retain optional unmodified source timestamps separately
+from presentation time, preserving the established file mapping.
+
+Open/probe has a 10-second cooperative deadline; each native read has a 5-second
+deadline. Queue waits do not consume that deadline. Cancellation interrupts I/O;
+the owner joins the run before closing its demux/codecs or releasing device
+references. A superseded generation cannot publish frames. Enabling, changing
+URL or a Reconnect bang creates a new connection. Audio output reconfiguration
+does not reopen or seek it. Video attachment changes restart the bounded run
+on the same demux. Outstanding CPU/GPU handles survive retirement.
+
+Transient network failures and EOF retry after 1, 2, 4, 8 and 10 seconds, then
+fault. Ten seconds of healthy output replenishes the retry allowance. Auth and
+unsupported-format failures are terminal. The live controller owns retries;
+FFmpeg HTTP retry is not enabled separately. HTTPS requests certificate
+verification. Status does not include input URLs or arbitrary exception text.
+
+A common A/V epoch preserves source offsets. Backward timestamp jumps over
+500 ms, or forward jumps exceeding arrival-time gaps by over 5 seconds, retire
+old output and establish a new epoch. Startup targets 150 ms of presentation
+reserve without waiting for a fixed frame count. Queue and memory limits stay
+bounded. Slow conversion drops superseded decoded candidates before upload;
+overload does not trigger seek or reconnect. Local buffering cannot bound delay
+inside a sender or TCP. No end-to-end latency measurement is claimed.
+
+Controlled HTTP and RTSP fixtures exercise real native decoding, including
+TCP/UDP, audio-only, late audio attachment, sample-rate changes, reconnection,
+timestamp jumps, concurrent file/live sources and retained CPU/GPU frames.
+An explicit external HTTPS smoke test uses a trusted public endpoint. These
+tests do not substitute for owner-run Gamma/Skia/Stride/export validation.
+
 ## Scope
 
 Implemented: local-file software and shared-device D3D11VA decode, GPU color
@@ -172,7 +215,8 @@ Auto mode falls back to software;
 explicit Hardware mode faults when unavailable.
 
 Not implemented: D3D11VA private-device CPU transfer, playback rate,
-subtitles, encoding, camera capture, HDR tone mapping, network streams and
+subtitles, encoding, local camera capture, HDR tone mapping, HLS/DASH live playback,
+SRT, DVR, live pause/freeze and
 auxiliary-layer or multi-stream alpha composition.
 
 CPU-only linear RGBA16F conversion remains expensive at UHD resolutions.
