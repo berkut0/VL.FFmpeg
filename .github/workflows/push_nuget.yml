@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: windows-latest
     permissions:
-      contents: write
+      contents: read
       id-token: write
     steps:
       - name: Git Checkout
@@ -44,9 +44,7 @@ jobs:
             "${{ github.ref_name }}"
           }
           $cleanVersion = $version.TrimStart("v")
-          $isPrerelease = $cleanVersion -match "-"
           "VERSION=$cleanVersion" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "IS_PRERELEASE=$isPrerelease" | Out-File -FilePath $env:GITHUB_ENV -Append
 
       - name: Pack
         run: powershell -NoProfile -ExecutionPolicy Bypass -File eng/Pack.ps1 -Version ${{ env.VERSION }}
@@ -66,13 +64,3 @@ jobs:
               --source https://api.nuget.org/v3/index.json `
               --skip-duplicate
           }
-
-      - name: GitHub Release
-        uses: ncipollo/release-action@v1
-        with:
-          tag: v${{ env.VERSION }}
-          artifacts: artifacts/packages/*
-          generateReleaseNotes: true
-          allowUpdates: true
-          prerelease: ${{ env.IS_PRERELEASE == 'True' }}
-          token: ${{ secrets.GITHUB_TOKEN }}
