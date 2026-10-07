@@ -2,11 +2,12 @@
 <package xmlns="http://schemas.microsoft.com/packaging/2013/05/nuspec.xsd">
   <metadata>
     <id>VL.FFmpeg</id>
-    <version>1.0.3</version>
+    <version>1.0.4</version>
     <title>VL.FFmpeg</title>
     <authors>Arktk Berkut</authors>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>Video player for vvvv gamma, powered by FFmpeg. Play arbitrary video files in Skia and Stride.</description>
+    <releaseNotes>Improve realtime frame scheduling, seek and pause responsiveness, and low-frame-rate previews and loops. Reuse decoder and conversion resources with bounded shared memory and worker budgets. Expand mixed-codec, concurrent-player and alpha-conversion regression coverage. Known limitation: the bundled FFmpeg decoder can corrupt NotchLC alpha; this release does not fix that native issue.</releaseNotes>
     <tags>VL vvvv gamma video ffmpeg player</tags>
     <license type="expression">MIT</license>
     <readme>README.md</readme>

@@ -3,23 +3,29 @@ using NUnit.Framework;
 using VL.FFmpeg.Internal.Decoding;
 using VL.FFmpeg.Internal.Interop;
 using VL.FFmpeg.Interop.AutoGen;
+using VL.FFmpeg.Nodes;
+using VL.Lib.Basics.Video;
 
 namespace VL.FFmpeg.Tests;
 
 public sealed unsafe class SoftwareD3D11ConverterTests
 {
-    [Test]
+    [TestCase(false, false)]
+    [TestCase(false, true)]
+    [TestCase(true, false)]
+    [TestCase(true, true)]
     [Platform("Win")]
-    public void PlanarTwelveBitAlphaIsPreserved()
+    public void PlanarTwelveBitAlphaIsPreserved(bool gpu, bool linear)
     {
         EnsureRuntime();
-        var createResult = D3D11CreateDevice(
-            0, 1, 0, 0x20, 0, 0, 7,
-            out var devicePointer,
-            out _,
-            out var immediateContextPointer);
-        if (createResult < 0 || devicePointer == 0)
-            Assert.Ignore($"No hardware D3D11 device is available (HRESULT 0x{createResult:X8}).");
+        nint devicePointer = 0, immediateContextPointer = 0;
+        if (gpu)
+        {
+            var createResult = D3D11CreateDevice(
+                0, 1, 0, 0x20, 0, 0, 7, out devicePointer, out _, out immediateContextPointer);
+            if (createResult < 0 || devicePointer == 0)
+                Assert.Ignore($"No hardware D3D11 device is available (HRESULT 0x{createResult:X8}).");
+        }
 
         AVFrame* frame = null;
         SoftwareD3D11FrameConverter? converter = null;
@@ -29,49 +35,56 @@ public sealed unsafe class SoftwareD3D11ConverterTests
             frame = ffmpeg.av_frame_alloc();
             Assert.That((nint)frame, Is.Not.EqualTo(nint.Zero));
             frame->format = (int)AVPixelFormat.AV_PIX_FMT_YUVA444P12LE;
-            frame->width = 4;
-            frame->height = 1;
+            frame->width = 256;
+            frame->height = 16;
             frame->colorspace = AVColorSpace.AVCOL_SPC_BT709;
             frame->color_range = AVColorRange.AVCOL_RANGE_JPEG;
-            frame->color_trc = AVColorTransferCharacteristic.AVCOL_TRC_LINEAR;
+            frame->color_trc = AVColorTransferCharacteristic.AVCOL_TRC_IEC61966_2_1;
             Assert.That(ffmpeg.av_frame_get_buffer(frame, 32), Is.GreaterThanOrEqualTo(0));
 
-            for (var component = 0; component < 3; component++)
+            // Every 12-bit alpha code, varying at pixel resolution in both axes.
+            // sRGB conversion must affect RGB only, never the alpha ramp.
+            for (var component = 0; component < 4; component++)
+            for (var y = 0; y < frame->height; y++)
             {
-                var values = (ushort*)frame->data[(uint)component];
+                var values = (ushort*)(frame->data[(uint)component] + y * frame->linesize[(uint)component]);
                 for (var x = 0; x < frame->width; x++)
-                    values[x] = 2048;
+                    values[x] = component == 3 ? (ushort)(y * frame->width + x) : (ushort)2048;
             }
-            var alpha = (ushort*)frame->data[3];
-            alpha[0] = 0;
-            alpha[1] = 1365;
-            alpha[2] = 2730;
-            alpha[3] = 4095;
 
-            converter = new SoftwareD3D11FrameConverter(devicePointer, linearOutput: false);
-            var color = VideoColorInfo.Resolve(
-                frame->colorspace,
-                frame->color_range,
-                frame->color_trc,
-                frame->height);
-            var converted = converter.TryConvert(
-                frame,
-                color,
-                CancellationToken.None,
-                out lease,
-                out var status);
-            Assert.That(converted, Is.True, status);
+            byte[] output;
+            if (gpu)
+            {
+                converter = new SoftwareD3D11FrameConverter(devicePointer, linearOutput: linear);
+                var color = VideoColorInfo.Resolve(
+                    frame->colorspace, frame->color_range, frame->color_trc, frame->height);
+                Assert.That(converter.TryConvert(frame, color, CancellationToken.None,
+                    out lease, out var status), Is.True, status);
+                output = ReadTexture(
+                    (ID3D11Device*)devicePointer,
+                    (ID3D11DeviceContext*)immediateContextPointer,
+                    (ID3D11Texture2D*)lease!.Texture.NativePointer,
+                    frame->width, frame->height, linear ? 8 : 4);
+            }
+            else
+            {
+                using var cpu = new VideoFrameConverter(0, GraphicsDeviceType.None, linear, DecodeMode.Software);
+                using var decoded = cpu.Convert(frame, TimeSpan.Zero, (25, 1),
+                    false, false, false, CancellationToken.None);
+                using var handle = decoded.CreateProvider().GetHandle();
+                Assert.That(handle.Resource.TryGetMemory(out var memory), Is.True);
+                output = memory.ToArray();
+            }
 
-            var output = ReadBgra(
-                (ID3D11Device*)devicePointer,
-                (ID3D11DeviceContext*)immediateContextPointer,
-                (ID3D11Texture2D*)lease!.Texture.NativePointer,
-                4,
-                1);
-            Assert.That(output[3], Is.EqualTo(0).Within(2));
-            Assert.That(output[7], Is.EqualTo(85).Within(2));
-            Assert.That(output[11], Is.EqualTo(170).Within(2));
-            Assert.That(output[15], Is.EqualTo(255).Within(2));
+            for (var pixel = 0; pixel < 4096; pixel++)
+            {
+                var actual = linear
+                    ? (float)BitConverter.UInt16BitsToHalf(BitConverter.ToUInt16(output, pixel * 8 + 6))
+                    : output[pixel * 4 + 3] / 255f;
+                // swscale's 12-to-8-bit rounding/dithering can differ by two codes.
+                Assert.That(actual, Is.EqualTo(pixel / 4095f).Within(linear ? .0005f : 2f / 255),
+                    $"Alpha at pixel {pixel}");
+            }
         }
         finally
         {

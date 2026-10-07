@@ -137,6 +137,30 @@ degradation.
 Auxiliary-layer and separate-video-stream alpha require composition outside the
 current single-stream decoder and are not supported.
 
+Known native limitation: the pinned FFmpeg revision `9b6c8969e0` corrupts NotchLC
+alpha ramps before frame conversion. A generated 16x16 packet reproduces repeated
+4x4 alpha values and 192/256 samples above the format's 12-bit maximum. Upstream
+[PR #23791](https://www.mail-archive.com/ffmpeg-devel@ffmpeg.org/msg189842.html)
+proposes correcting block reads, per-pixel selectors and interpolation. Its fix
+is absent from our pinned runtime; the DLLs have not been replaced. CPU and GPU
+conversion preserve valid 12-bit alpha in both output formats (8-bit output
+allows swscale rounding/dithering). No post-decode smoothing can restore samples
+already lost by the decoder.
+
+The synthetic decoder regression test intentionally remains explicit and fails on the
+current runtime. Run it when evaluating a rebuilt FFmpeg, then enable it in the
+regular suite once fixed. Its expected interpolation follows the proposed
+upstream patch; an independent encoder reference is still needed:
+
+```powershell
+dotnet test tests/VL.FFmpeg.Tests/VL.FFmpeg.Tests.csproj -c Release --filter FullyQualifiedName~NativeDecoderPreservesAlphaBlockSamples
+```
+
+A native fix requires an ABI-compatible LGPL build retaining existing codecs,
+updated runtime hashes/provenance and the normal package/Gamma release checks.
+This synthetic reproduction establishes a decoder defect; attributing a user's
+particular visual artifact still requires their file or a reference image.
+
 ## Scope
 
 Implemented: local-file software and shared-device D3D11VA decode, GPU color
