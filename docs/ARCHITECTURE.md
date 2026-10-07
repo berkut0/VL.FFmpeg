@@ -95,8 +95,11 @@ sample-accurate hardware A/V sync is not claimed.
 ## Resource ownership and budgets
 
 - Video lead target: 150 ms, at most six ready frames and two raw queued frames.
-- Packet queues: eight packets / 64 MiB each. A single larger packet is permitted
-  within the shared byte budget; video packet dependencies are preserved.
+- Packet queues: video eight packets / 64 MiB; compressed audio 1024 packets /
+  4 MiB. Audio needs a reserve for decoder priming and container interleaving,
+  including low-frame-rate video; it is distinct from the PCM output buffer.
+  Allocation is lazy. A single larger packet is permitted within the shared byte
+  budget; video packet dependencies are preserved.
 - Audio target: 250 ms or one requested block, whichever is larger. One decoded
   block can exceed the target. Queued PCM and outstanding audio output leases are
   charged to the CPU budget.
@@ -202,6 +205,16 @@ reserve without waiting for a fixed frame count. Queue and memory limits stay
 bounded. Slow conversion drops superseded decoded candidates before upload;
 overload does not trigger seek or reconnect. Local buffering cannot bound delay
 inside a sender or TCP. No end-to-end latency measurement is claimed.
+
+Live input flows into bounded packet/raw-frame queues; the existing conversion
+scheduler limits future output. Compressed audio has its own reserve for decoder
+priming and container interleaving, so timely packets are not discarded merely
+because the small PCM output buffer is full. File read-ahead counts FFmpeg's
+reported frame-thread delay once. RTSP Live uses `fflags=+nobuffer` during format
+discovery, avoiding replay of old probe packets and consequent UDP track
+starvation. This may require waiting for the next keyframe. HTTP recordings keep
+their probe packets. Extreme interleaving or resource exhaustion can still
+exceed the finite reserve and report an audio discontinuity.
 
 Controlled HTTP and RTSP fixtures exercise real native decoding, including
 TCP/UDP, audio-only, late audio attachment, sample-rate changes, reconnection,

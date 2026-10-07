@@ -1,8 +1,8 @@
 # Network playback validation
 
 Validated 2026-10-07 on Windows x64, .NET 8, bundled FFmpeg `9b6c8969e0`.
-The standard Release suite passes 184 tests. The explicit trusted-HTTPS recording
-test also passes. Native diagnostics about intentionally lost packets, rejected
+The standard Release suite passes 189 tests. Explicit trusted-HTTPS recording
+and Live audio-continuity tests also pass. Native diagnostics about intentionally lost packets, rejected
 certificates and cancelled requests are expected in these fault-injection tests.
 
 | Scenario | Result |
@@ -19,6 +19,8 @@ certificates and cancelled requests are expected in these fault-injection tests.
 | Stalled RTSP DESCRIBE | Changing URL cancels the handshake and opens the replacement source |
 | UDP packet loss/reordering | VP8 fragmented frames continue without reconnect; H.264 FU-A fragment loss is followed by continued playback across the next repeated GOP |
 | A/V timestamp reset | Video and audible audio resume after a backward source-time jump, on the same connection |
+| Fast input with realtime audio consumption | VP8/L16, H.264/L16 and 1 fps video deliver the continuous test tone without audio queue drops or silent blocks after startup |
+| Reported Sintel Live audio interruption | Before correction: 29 queue discontinuities in an 8-second reproduction. After correction: zero discontinuities and zero underruns over the same interval |
 | Ordinary player on RTSP live source | Initial playback works; a server-rejected seek becomes an explicit error. Use the Live node for this source type |
 
 The TLS fixture uses a generated certificate and a temporary imported Windows
@@ -32,6 +34,7 @@ Commands:
 ```powershell
 dotnet test tests/VL.FFmpeg.Tests/VL.FFmpeg.Tests.csproj -c Release
 dotnet test tests/VL.FFmpeg.Tests/VL.FFmpeg.Tests.csproj -c Release --filter FullyQualifiedName~TrustedHttpsRecordingSupportsPauseSeekAndLoop
+dotnet test tests/VL.FFmpeg.Tests/VL.FFmpeg.Tests.csproj -c Release --filter FullyQualifiedName~SintelLiveAudioDoesNotOverflow
 ```
 
 The explicit HTTPS test requires external access. The H.264 RTP fixture uses the

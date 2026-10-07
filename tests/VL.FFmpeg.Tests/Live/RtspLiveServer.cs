@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Diagnostics;
 using System.Net;
 using System.Net.Sockets;
 using System.Text;
@@ -27,6 +28,8 @@ internal sealed class RtspLiveServer : IDisposable
     public bool ReorderVideoFragments = false;
     public string? StallMethod = null;
     public bool RequireAuthorization = false;
+    public int PacketIntervalMilliseconds = 20;
+    public int VideoIntervalTicks = 2;
 
     public RtspLiveServer(bool h264 = false)
     {
@@ -85,7 +88,7 @@ internal sealed class RtspLiveServer : IDisposable
                 if (method == "OPTIONS") headers += "Public: OPTIONS, DESCRIBE, SETUP, PLAY, TEARDOWN, GET_PARAMETER\r\n";
                 if (method == "DESCRIBE")
                 {
-                    var videoDescription = _h264 is null ? "a=rtpmap:96 VP8/90000\r\n"
+                    var videoDescription = _h264 is null ? $"a=rtpmap:96 VP8/90000\r\na=framerate:{50 / VideoIntervalTicks}\r\n"
                         : $"a=rtpmap:96 H264/90000\r\na=fmtp:96 packetization-mode=1;sprop-parameter-sets={_h264.ParameterSets}\r\n";
                     body = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=Live test\r\nc=IN IP4 127.0.0.1\r\nt=0 0\r\na=control:*\r\n"
                         + "m=video 0 RTP/AVP 96\r\n" + videoDescription + "a=control:trackID=0\r\n"
@@ -132,12 +135,13 @@ internal sealed class RtspLiveServer : IDisposable
         for (var i = 0; i < 960; i++)
             BinaryPrimitives.WriteInt16BigEndian(audio.AsSpan(i * 2), (short)(Math.Sin(i * Math.PI / 24) * 10000));
         byte[] video = [0x10, .. _vp8]; // RFC 7741: start of first partition, complete keyframe.
+        var clock = Stopwatch.StartNew();
         for (uint tick = 0; ; tick++)
         {
             token.ThrowIfCancellationRequested();
             if (Connections == 1 && DisconnectAfterTicks > 0 && tick >= DisconnectAfterTicks)
             { client.Close(); return; }
-            if (tick % 2 == 0 && routes.ContainsKey(0))
+            if (tick % VideoIntervalTicks == 0 && routes.ContainsKey(0))
             {
                 var timestamp = unchecked(tick * 1800 + (uint)TimestampOffset);
                 if (_h264 is not null)
@@ -160,7 +164,8 @@ internal sealed class RtspLiveServer : IDisposable
             }
             if (routes.ContainsKey(1))
                 await Send(1, 97, audioSequence++, unchecked(tick * 960 + (uint)(TimestampOffset * 48000L / 90000)), audio);
-            await Task.Delay(20, token);
+            var remaining = TimeSpan.FromMilliseconds((tick + 1d) * PacketIntervalMilliseconds) - clock.Elapsed;
+            if (remaining > TimeSpan.Zero) await Task.Delay(remaining, token);
         }
 
         async Task Send(int track, byte type, ushort sequence, uint timestamp, byte[] payload, bool marker = true)

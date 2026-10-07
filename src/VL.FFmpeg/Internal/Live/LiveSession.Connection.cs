@@ -71,12 +71,20 @@ internal sealed partial class LiveSession
 
                     async Task ConnectAndPlay()
                     {
-                        LiveConnectionPolicy.ValidateUrl(options.Url);
+                        var uri = LiveConnectionPolicy.ValidateUrl(options.Url);
                         if (demux is null)
                         {
                             SetStatus(LivePlaybackPhase.Connecting, "Opening live source.", revision);
                             var inputOptions = MediaInputOptions.ForNetwork(options.Url,
-                                options.Transport == LiveTransport.Tcp ? "tcp" : "udp");
+                                options.Transport == LiveTransport.Tcp ? "tcp" : "udp")!;
+                            // Start RTSP at the current stream position, not with the
+                            // historical packets collected while discovering its format.
+                            if (uri.Scheme == "rtsp")
+                            {
+                                var native = new Dictionary<string, string>(inputOptions.NativeOptions!);
+                                native["fflags"] = "+nobuffer";
+                                inputOptions = inputOptions with { NativeOptions = native };
+                            }
                             demux = await MediaPipeline.Io(() => new FFmpegDemuxContext(options.Url, token,
                                 options: inputOptions), token).ConfigureAwait(false);
                             _diagnostics.ContainerOpened();

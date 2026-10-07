@@ -38,7 +38,11 @@ internal unsafe sealed class FFmpegVideoDecoder : IDisposable
     private bool _disposed;
     private int _threadCount;
     public int ThreadCount => _threadCount;
-    public int DelayFrames => Math.Max(_codecContext->delay, _codecContext->has_b_frames) + Math.Max(0, _threadCount - 1);
+    // FFmpeg already includes the frame-thread queue in delay. Reordering is
+    // additional for frame-threaded decode; requested thread count is not another queue.
+    public int DelayFrames => (_codecContext->active_thread_type & ffmpeg.FF_THREAD_FRAME) != 0
+        ? Math.Max(0, _codecContext->delay) + Math.Max(0, _codecContext->has_b_frames)
+        : Math.Max(_codecContext->delay, _codecContext->has_b_frames);
 
     public FFmpegVideoDecoder(
         FFmpegDemuxContext demux,

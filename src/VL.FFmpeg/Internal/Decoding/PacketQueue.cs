@@ -1,4 +1,3 @@
-using System.Threading.Channels;
 using VL.FFmpeg.Interop.AutoGen;
 
 namespace VL.FFmpeg.Internal.Decoding;
@@ -23,9 +22,8 @@ internal unsafe sealed class NativePacket : IDisposable
     }
 }
 
-internal sealed class PacketQueue : IDisposable
+internal sealed class PacketQueue(int packetCapacity = 8, long byteCapacity = 64L * 1024 * 1024) : IDisposable
 {
-    private const long ByteCapacity = 64L * 1024 * 1024;
     private readonly object _gate = new();
     private readonly Queue<NativePacket> _packets = new();
     private long _bytes;
@@ -36,7 +34,7 @@ internal sealed class PacketQueue : IDisposable
     {
         lock (_gate)
         {
-            if (_complete || _packets.Count >= 8 || (_packets.Count > 0 && packet.Size > ByteCapacity - _bytes)) return false;
+            if (_complete || _packets.Count >= packetCapacity || (_packets.Count > 0 && packet.Size > byteCapacity - _bytes)) return false;
             if (!packet.TryReserve()) return false;
             _packets.Enqueue(packet);
             _bytes += packet.Size;

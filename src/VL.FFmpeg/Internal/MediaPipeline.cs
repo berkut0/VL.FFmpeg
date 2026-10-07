@@ -15,7 +15,9 @@ internal static class MediaPipeline
         Action<double, CancellationToken> admitVideo, PlaybackDiagnostics diagnostics, CancellationToken token)
     {
         using var videoPackets = new PacketQueue();
-        using var audioPackets = new PacketQueue();
+        // Compressed audio must cover decoder priming and container interleaving,
+        // not just the small PCM output buffer. It remains count/byte/budget bounded.
+        using var audioPackets = new PacketQueue(packetCapacity: 1024, byteCapacity: 4L * 1024 * 1024);
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         var runToken = lifetime.Token;
         demux.SetCancellation(runToken);

@@ -217,7 +217,7 @@ public sealed class LivePlayerTests
                 }
                 Thread.Sleep(5);
             }
-            Assert.That(audible, Is.True, source.Session.Status.Message);
+            Assert.That(audible, Is.True, $"Requested rate {rate}. {source.Session.Status.Message}");
         }
         Assert.That(server.Connections, Is.EqualTo(1));
         Assert.That(source.Session.Metrics.Seeks, Is.Zero);
